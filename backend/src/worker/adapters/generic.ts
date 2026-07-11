@@ -33,20 +33,25 @@ export const genericAdapter: SourceAdapter = {
 
   async fetchProduct(url: string): Promise<ScrapedProduct> {
     const html = await getHtml(url);
-    const $ = cheerio.load(html);
-
-    const fromJsonLd = extractJsonLd($, url);
-    if (fromJsonLd) return fromJsonLd;
-
-    const fromOg = extractOpenGraph($, url);
-    if (fromOg) return fromOg;
-
-    throw new AdapterError(
-      "PARSE_FAILED",
-      `No Product JSON-LD or OpenGraph product data found at ${url}`,
-    );
+    const product = parseProductHtml(html, url);
+    if (!product) {
+      throw new AdapterError(
+        "PARSE_FAILED",
+        `No Product JSON-LD or OpenGraph product data found at ${url}`,
+      );
+    }
+    return product;
   },
 };
+
+/**
+ * Pure extraction core (no network) — unit-tested against saved HTML
+ * fixtures in backend/tests/fixtures/.
+ */
+export function parseProductHtml(html: string, url: string): ScrapedProduct | null {
+  const $ = cheerio.load(html);
+  return extractJsonLd($, url) ?? extractOpenGraph($, url);
+}
 
 // ---------------------------------------------------------------- JSON-LD
 
@@ -168,8 +173,8 @@ function extractOpenGraph($: cheerio.CheerioAPI, url: string): ScrapedProduct | 
 
 // ---------------------------------------------------------------- utils
 
-function parsePrice(v: unknown): number | null {
-  if (typeof v === "number" && Number.isFinite(v)) return v;
+export function parsePrice(v: unknown): number | null {
+  if (typeof v === "number") return Number.isFinite(v) && v > 0 ? v : null;
   if (typeof v !== "string") return null;
   const cleaned = v.replace(/[^\d.,]/g, "").replace(/,(?=\d{3}(\D|$))/g, "").replace(",", ".");
   const n = Number.parseFloat(cleaned);
