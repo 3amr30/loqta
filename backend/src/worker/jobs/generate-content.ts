@@ -87,6 +87,6 @@ export async function handleGenerateContent(payload: GenerateContentPayload) {
     ],
   );
 
-  await notify(listing.store_id, "import_done", "تم تحسين محتوى المنتج",
+  await notify(listing.store_id, "content_ready", "تم تحسين محتوى المنتج",
     String(content.title_ar ?? listing.title_ar), { listingId: listing.id });
 }

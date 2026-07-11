@@ -73,13 +73,18 @@ export async function handleImportProduct(payload: ImportProductPayload) {
   } catch (err) {
     const message =
       err instanceof AdapterError ? `${err.code}: ${err.message}` : String(err);
-    await query(
-      `update import_jobs set status = 'failed', error = $2, processed_at = now() where id = $1`,
+    // status guard: pg-boss retries re-run this handler - the merchant gets
+    // exactly ONE failure notification (first transition to 'failed').
+    const marked = await queryOne<{ id: string }>(
+      `update import_jobs set status = 'failed', error = $2, processed_at = now()
+       where id = $1 and status <> 'failed' returning id`,
       [job.id, message.slice(0, 1000)],
     );
-    await notify(job.store_id, "import_failed", "فشل استيراد المنتج", message.slice(0, 300), {
-      url: job.url,
-    });
+    if (marked) {
+      await notify(job.store_id, "import_failed", "فشل استيراد المنتج", message.slice(0, 300), {
+        url: job.url,
+      });
+    }
     throw err; // let pg-boss retry transient failures
   }
 }

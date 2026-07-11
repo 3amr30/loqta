@@ -9,6 +9,7 @@ import { resolveAdapter } from "../adapters";
 import { FX_STALE_NOTE, getFxRate } from "../lib/fx";
 import { notify, query, queryOne } from "../../lib/db";
 import { Q, type SyncProductPayload } from "../queues";
+import { decideSyncActions, type PriceMode, type SyncPolicy } from "./sync-policy";
 
 /**
  * Runs every 15 min (pg-boss schedule). Tiered frequency keeps scraping
@@ -152,7 +153,11 @@ async function applyPricePolicies(
     const direction = newCost > oldCost ? "زاد" : "قل";
     const body = `سعر المورد ${direction}: ${oldCost} → ${newCost} ${costCurrency}`;
 
-    if (l.sync_policy === "auto_apply" && l.price_mode === "rule") {
+    const actions = decideSyncActions(
+      { policy: l.sync_policy as SyncPolicy, priceMode: l.price_mode as PriceMode },
+      { priceChanged: true, wentOutOfStock: false, backInStock: false },
+    );
+    if (actions.reprice) {
       const fx = await getFxRate(costCurrency, l.currency);
       const pricing = computeRetail({
         cost: newCost,

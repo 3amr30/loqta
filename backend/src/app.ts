@@ -13,6 +13,8 @@ import { listingsRoutes } from "./routes/v1/listings";
 import { pricingRoutes } from "./routes/v1/pricing";
 import { publicRoutes } from "./routes/v1/public";
 import { monitoringRoutes } from "./routes/v1/monitoring";
+import { ordersRoutes } from "./routes/v1/orders";
+import { notificationsRoutes } from "./routes/v1/notifications";
 
 /** App factory - server.ts wires it to the network; tests use inject(). */
 export async function buildApp(config: Config): Promise<FastifyInstance> {
@@ -39,6 +41,8 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   pricingRoutes(app);
   publicRoutes(app);
   monitoringRoutes(app);
+  ordersRoutes(app);
+  notificationsRoutes(app);
 
   // Built SPA locations: <repo>/frontend/*/dist relative to backend/.
   const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
