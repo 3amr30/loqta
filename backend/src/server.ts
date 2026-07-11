@@ -1,22 +1,21 @@
 import "dotenv/config";
-import Fastify from "fastify";
-import { initSentry, Sentry } from "./lib/sentry";
+import { ConfigError, loadConfig } from "./config";
+import { initSentry } from "./lib/sentry";
+import { buildApp } from "./app";
 
 initSentry("api");
 
-const app = Fastify({ logger: true });
+async function main() {
+  const config = loadConfig();
+  const app = await buildApp(config);
+  await app.listen({ port: config.PORT, host: "0.0.0.0" });
+}
 
-app.get("/healthz", async () => ({ ok: true }));
-
-// Consistent error envelope; the full error-handler plugin lands in P1.
-app.setErrorHandler((err, req, reply) => {
-  Sentry.captureException(err, { tags: { route: req.url } });
-  req.log.error(err);
-  reply.status(500).send({ error: { code: "INTERNAL", message: "Internal server error" } });
-});
-
-const port = Number(process.env.PORT ?? 3001);
-app.listen({ port, host: "0.0.0.0" }).catch((err) => {
-  app.log.error(err);
+main().catch((err) => {
+  if (err instanceof ConfigError) {
+    console.error(err.message);
+  } else {
+    console.error("api failed to start:", err);
+  }
   process.exit(1);
 });

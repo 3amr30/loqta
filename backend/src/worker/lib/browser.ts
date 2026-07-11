@@ -1,5 +1,6 @@
 import { chromium, type Browser } from "playwright";
 import { AdapterError } from "@loqta/core";
+import { politeness } from "./politeness";
 
 let browser: Browser | null = null;
 
@@ -30,8 +31,12 @@ const UA =
  *     and the browsers; do NOT build your own rotating-proxy farm).
  *  2. Otherwise -> local Playwright. Fine for most local Egyptian supplier
  *     sites (WooCommerce/Shopify/Salla style); big marketplaces will block it.
+ *
+ * Every path goes through the per-domain politeness gate; 403/429 escalates
+ * that host's backoff so retries never hammer a supplier.
  */
 export async function getHtml(url: string): Promise<string> {
+  await politeness.acquire(url);
   const apiKey = process.env.SCRAPER_API_KEY;
 
   if (apiKey) {
@@ -40,8 +45,10 @@ export async function getHtml(url: string): Promise<string> {
       `&render=true&url=${encodeURIComponent(url)}`;
     const res = await fetch(proxied, { signal: AbortSignal.timeout(90_000) });
     if (!res.ok) {
+      if (res.status === 403 || res.status === 429) politeness.reportBlocked(url);
       throw new AdapterError("BLOCKED", `ScraperAPI responded ${res.status} for ${url}`);
     }
+    politeness.reportOk(url);
     return res.text();
   }
 
@@ -54,6 +61,7 @@ export async function getHtml(url: string): Promise<string> {
       throw new AdapterError("NOT_FOUND", `404 for ${url}`);
     }
     if (resp && (resp.status() === 403 || resp.status() === 429)) {
+      politeness.reportBlocked(url);
       throw new AdapterError(
         "BLOCKED",
         `Got ${resp.status()} for ${url} — set SCRAPER_API_KEY for blocked sites.`,
@@ -61,7 +69,9 @@ export async function getHtml(url: string): Promise<string> {
     }
     // Give client-rendered stores a moment to hydrate price/JSON-LD.
     await page.waitForTimeout(1_500);
-    return await page.content();
+    const html = await page.content();
+    politeness.reportOk(url);
+    return html;
   } finally {
     await ctx.close().catch(() => {});
   }

@@ -1,7 +1,7 @@
 import "dotenv/config";
 import PgBoss from "pg-boss";
-import { initSentry } from "./lib/sentry";
-import { pool } from "./lib/db";
+import { initSentry, runJob } from "./lib/sentry";
+import { endPool } from "./lib/db";
 import { closeBrowser } from "./worker/lib/browser";
 import { Q, type GenerateContentPayload, type ImportProductPayload, type ProcessImagePayload, type SyncProductPayload } from "./worker/queues";
 import { handleImportProduct, sweepImportJobs } from "./worker/jobs/import-product";
@@ -29,24 +29,38 @@ async function main() {
   for (const name of Object.values(Q)) await boss.createQueue(name);
 
   // ---- workers -------------------------------------------------------
+  // Every handler runs through runJob: errors reach Sentry tagged with
+  // queue/jobId/payload ids, then rethrow so pg-boss owns retries.
   await boss.work<ImportProductPayload>(Q.importProduct, { batchSize: 3 }, async (jobs) => {
-    for (const job of jobs) await handleImportProduct(job.data);
+    for (const job of jobs)
+      await runJob(Q.importProduct, job.id, { importJobId: job.data.importJobId }, () =>
+        handleImportProduct(job.data),
+      );
   });
 
   await boss.work<SyncProductPayload>(Q.syncProduct, { batchSize: 3 }, async (jobs) => {
-    for (const job of jobs) await handleSyncProduct(job.data);
+    for (const job of jobs)
+      await runJob(Q.syncProduct, job.id, { sourceProductId: job.data.sourceProductId }, () =>
+        handleSyncProduct(job.data),
+      );
   });
 
-  await boss.work(Q.syncTick, async () => {
-    await handleSyncTick(boss);
+  await boss.work(Q.syncTick, async (jobs) => {
+    await runJob(Q.syncTick, jobs[0]?.id ?? "tick", {}, () => handleSyncTick(boss));
   });
 
   await boss.work<GenerateContentPayload>(Q.generateContent, { batchSize: 2 }, async (jobs) => {
-    for (const job of jobs) await handleGenerateContent(job.data);
+    for (const job of jobs)
+      await runJob(Q.generateContent, job.id, { listingId: job.data.listingId }, () =>
+        handleGenerateContent(job.data),
+      );
   });
 
   await boss.work<ProcessImagePayload>(Q.processImage, { batchSize: 2 }, async (jobs) => {
-    for (const job of jobs) await handleProcessImage(job.data);
+    for (const job of jobs)
+      await runJob(Q.processImage, job.id, { listingId: job.data.listingId }, () =>
+        handleProcessImage(job.data),
+      );
   });
 
   // ---- schedules -----------------------------------------------------
@@ -66,7 +80,7 @@ async function main() {
     clearInterval(sweepTimer);
     await boss.stop({ graceful: true, timeout: 15_000 }).catch(() => {});
     await closeBrowser();
-    await pool.end().catch(() => {});
+    await endPool();
     process.exit(0);
   };
   process.on("SIGINT", () => void shutdown("SIGINT"));

@@ -6,7 +6,7 @@ import {
   parsePricingSteps,
 } from "@loqta/core";
 import { resolveAdapter } from "../adapters";
-import { getFxRate } from "../lib/fx";
+import { FX_STALE_NOTE, getFxRate } from "../lib/fx";
 import { notify, query, queryOne } from "../../lib/db";
 import { Q, type SyncProductPayload } from "../queues";
 
@@ -153,20 +153,20 @@ async function applyPricePolicies(
     const body = `سعر المورد ${direction}: ${oldCost} → ${newCost} ${costCurrency}`;
 
     if (l.sync_policy === "auto_apply" && l.price_mode === "rule") {
-      const fxRate = await getFxRate(costCurrency, l.currency);
+      const fx = await getFxRate(costCurrency, l.currency);
       const pricing = computeRetail({
         cost: newCost,
-        fxRate,
+        fxRate: fx.rate,
         steps: parsePricingSteps(l.steps ?? []),
       });
       await query(
         `update listings
          set retail_price = $2, cost_snapshot = $3, fx_rate_snapshot = $4
          where id = $1`,
-        [l.id, pricing.retail, pricing.effectiveCost, fxRate],
+        [l.id, pricing.retail, pricing.effectiveCost, fx.rate],
       );
       await notify(l.store_id, "price_changed", "تم تحديث سعر المنتج تلقائيًا",
-        `${body} — سعر البيع الجديد: ${pricing.retail} ${l.currency}`, { listingId: l.id });
+        `${body} — سعر البيع الجديد: ${pricing.retail} ${l.currency}${fx.stale ? FX_STALE_NOTE : ""}`, { listingId: l.id });
     } else {
       await notify(l.store_id, "price_changed", "سعر المورد اتغير", body, { listingId: l.id });
     }

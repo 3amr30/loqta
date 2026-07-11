@@ -7,7 +7,24 @@ import App from "./App";
 
 // Sentry is lazy-loaded as an async chunk: the SDK (+ browser tracing) is
 // ~50KB gz and must not count against the 150KB *initial* JS budget.
-void import("./sentry").then((m) => m.initSentry());
+//
+// Early-error gap cover: between first paint and the chunk resolving, a
+// synchronous error would be lost. Buffer window errors + unhandled
+// rejections immediately, flush into Sentry once it initializes (Sentry's
+// own global handlers take over from there).
+const earlyErrors: unknown[] = [];
+const onEarlyError = (e: ErrorEvent) => earlyErrors.push(e.error ?? e.message);
+const onEarlyRejection = (e: PromiseRejectionEvent) => earlyErrors.push(e.reason);
+window.addEventListener("error", onEarlyError);
+window.addEventListener("unhandledrejection", onEarlyRejection);
+
+void import("./sentry").then((m) => {
+  m.initSentry();
+  window.removeEventListener("error", onEarlyError);
+  window.removeEventListener("unhandledrejection", onEarlyRejection);
+  for (const err of earlyErrors) m.Sentry.captureException(err);
+  earlyErrors.length = 0;
+});
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false };

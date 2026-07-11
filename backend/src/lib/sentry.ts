@@ -19,3 +19,21 @@ export function initSentry(surface: "api" | "worker") {
 }
 
 export { Sentry };
+
+/**
+ * Wrap one pg-boss job execution: failures are tagged (queue, jobId,
+ * payload ids) and rethrown so pg-boss still owns retries/backoff.
+ */
+export async function runJob(
+  queue: string,
+  jobId: string,
+  tags: Record<string, string | undefined>,
+  fn: () => Promise<void>,
+): Promise<void> {
+  try {
+    await fn();
+  } catch (err) {
+    Sentry.captureException(err, { tags: { queue, jobId, ...tags } });
+    throw err;
+  }
+}

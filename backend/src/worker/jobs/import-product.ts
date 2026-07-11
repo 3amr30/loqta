@@ -7,7 +7,7 @@ import {
   type ScrapedProduct,
 } from "@loqta/core";
 import { resolveAdapter } from "../adapters";
-import { getFxRate } from "../lib/fx";
+import { FX_STALE_NOTE, getFxRate } from "../lib/fx";
 import { notify, query, queryOne } from "../../lib/db";
 import { Q, type ImportProductPayload } from "../queues";
 
@@ -55,7 +55,7 @@ export async function handleImportProduct(payload: ImportProductPayload) {
 
     const supplierId = job.supplier_id ?? (await ensureSupplier(adapter.id, job.url));
     const sourceProductId = await upsertSourceProduct(supplierId, product);
-    const listingId = await createListing(job.store_id, sourceProductId, product);
+    const { id: listingId, fxStale } = await createListing(job.store_id, sourceProductId, product);
 
     await query(
       `update import_jobs
@@ -63,9 +63,13 @@ export async function handleImportProduct(payload: ImportProductPayload) {
        where id = $1`,
       [job.id, sourceProductId, listingId],
     );
-    await notify(job.store_id, "import_done", "تم استيراد المنتج", product.title, {
-      listingId,
-    });
+    await notify(
+      job.store_id,
+      "import_done",
+      "تم استيراد المنتج",
+      product.title + (fxStale ? FX_STALE_NOTE : ""),
+      { listingId },
+    );
   } catch (err) {
     const message =
       err instanceof AdapterError ? `${err.code}: ${err.message}` : String(err);
@@ -159,12 +163,12 @@ async function createListing(
   storeId: string,
   sourceProductId: string,
   p: ScrapedProduct,
-): Promise<string> {
+): Promise<{ id: string; fxStale: boolean }> {
   const existing = await queryOne<{ id: string }>(
     `select id from listings where store_id = $1 and source_product_id = $2`,
     [storeId, sourceProductId],
   );
-  if (existing) return existing.id;
+  if (existing) return { id: existing.id, fxStale: false };
 
   const store = await queryOne<{ currency: string }>(
     `select currency from stores where id = $1`,
@@ -175,10 +179,10 @@ async function createListing(
     [storeId],
   );
 
-  const fxRate = await getFxRate(p.currency, store?.currency ?? "EGP");
+  const fx = await getFxRate(p.currency, store?.currency ?? "EGP");
   const pricing = computeRetail({
     cost: p.price,
-    fxRate,
+    fxRate: fx.rate,
     steps: parsePricingSteps(rule?.steps ?? []),
   });
 
@@ -200,11 +204,11 @@ async function createListing(
       store?.currency ?? "EGP",
       pricing.retail,
       pricing.effectiveCost,
-      fxRate,
+      fx.rate,
       rule?.id ?? null,
     ],
   );
-  return row!.id;
+  return { id: row!.id, fxStale: fx.stale };
 }
 
 function makeSlug(title: string): string {
