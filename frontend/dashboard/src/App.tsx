@@ -12,6 +12,8 @@ import ListingEdit from "./pages/ListingEdit";
 import Orders from "./pages/Orders";
 import OrderDetail from "./pages/OrderDetail";
 import Settings from "./pages/Settings";
+import PricingRules from "./pages/PricingRules";
+import Stats from "./pages/Stats";
 
 interface Me {
   profile: { id: string; full_name: string };
@@ -45,6 +47,8 @@ function Protected() {
         <Route path="orders" element={<Orders />} />
         <Route path="orders/:id" element={<OrderDetail />} />
         <Route path="settings" element={<Settings />} />
+        <Route path="pricing" element={<PricingRules />} />
+        <Route path="stats" element={<Stats />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

@@ -15,6 +15,8 @@ import { publicRoutes } from "./routes/v1/public";
 import { monitoringRoutes } from "./routes/v1/monitoring";
 import { ordersRoutes } from "./routes/v1/orders";
 import { notificationsRoutes } from "./routes/v1/notifications";
+import { aiRoutes } from "./routes/v1/ai";
+import { statsRoutes } from "./routes/v1/stats";
 
 /** App factory - server.ts wires it to the network; tests use inject(). */
 export async function buildApp(config: Config): Promise<FastifyInstance> {
@@ -43,6 +45,8 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   monitoringRoutes(app);
   ordersRoutes(app);
   notificationsRoutes(app);
+  aiRoutes(app);
+  statsRoutes(app);
 
   // Built SPA locations: <repo>/frontend/*/dist relative to backend/.
   const repoRoot = fileURLToPath(new URL("../..", import.meta.url));

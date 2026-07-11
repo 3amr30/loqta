@@ -54,6 +54,26 @@ export default function ListingEdit() {
     },
   });
 
+  // AI rewrite: enqueue, then poll the listing until the worker flips
+  // ai_generated (or we give up after ~90s). Content refreshes in place.
+  const [rewriting, setRewriting] = useState(false);
+  const rewrite = useMutation({
+    mutationFn: () => api(`/v1/listings/${id}/ai-rewrite`, { method: "POST" }),
+    onSuccess: () => {
+      setRewriting(true);
+      let tries = 0;
+      const timer = setInterval(() => {
+        tries += 1;
+        void qc.invalidateQueries({ queryKey: ["listing", id] });
+        const fresh = qc.getQueryData<Detail>(["listing", id]);
+        if ((fresh?.listing as { ai_generated?: boolean } | undefined)?.ai_generated || tries > 18) {
+          clearInterval(timer);
+          setRewriting(false);
+        }
+      }, 5000);
+    },
+  });
+
   const l = detail.data?.listing;
   const sp = detail.data?.sourceProduct;
 
@@ -116,11 +136,11 @@ export default function ListingEdit() {
             حفظ المحتوى
           </button>
           <button
-            disabled
-            title="متاح قريبًا"
-            className="rounded-lg border border-stone-300 px-5 py-2 text-stone-400"
+            onClick={() => rewrite.mutate()}
+            disabled={rewrite.isPending || rewriting}
+            className="rounded-lg border border-amber-300 px-5 py-2 text-amber-700 hover:bg-amber-50 disabled:opacity-50"
           >
-            ✨ تحسين بالذكاء الاصطناعي
+            {rewriting ? "جاري التحسين... ✨" : "✨ تحسين بالذكاء الاصطناعي"}
           </button>
         </div>
       </section>

@@ -1,115 +1,154 @@
 # لقطة — Loqta
 
-**Arabic-first dropshipping SaaS for Egypt & MENA.** A merchant pastes a supplier product URL → Loqta scrapes/imports it, prices it with the merchant's margin rules, publishes it on their own storefront (`{slug}.loqta.shop`), keeps supplier price & stock in sync, and handles COD-first checkout.
-
-Built around three decisions:
-
-1. **Local suppliers are first-class** (the Taager model) — AliExpress→Egypt dropshipping breaks on shipping time, customs, and COD. Local suppliers ship in days and COD works.
-2. **COD-first checkout** — solves the multi-tenant payment onboarding problem on day one. Merchant-owned Paymob/Stripe keys come later.
-3. **Shared source catalog** — one supplier URL = one `source_product`, synced once, no matter how many merchants list it. Each merchant owns a `listing` on top of it.
+Arabic-first, multi-tenant dropshipping SaaS for Egypt & MENA.
+A merchant pastes a supplier product URL → Loqta imports it, prices it by
+the merchant's margin rules, publishes it on `{slug}.loqta.shop`, keeps
+supplier price/stock in sync, and takes **Cash-on-Delivery** orders.
 
 ## Architecture
 
 ```
-apps/web      Next.js 15 (App Router) — dashboard + multi-tenant storefronts
-              {slug}.loqta.shop → middleware rewrite → /s/{slug}
-apps/worker   Node + Playwright + pg-boss — scraping, sync, AI, images
-              (Docker → Railway/Fly/VPS; headless Chromium can't live on Vercel)
-packages/core Shared pure logic: pricing engine + adapter contract
-supabase/     Postgres migrations: schema, RLS, views, storage buckets
+frontend/dashboard    React 19 SPA - merchant dashboard (app.loqta.shop)
+frontend/storefront   React 19 SPA - buyer storefront, <150KB initial JS
+backend               Fastify API (src/server.ts) + pg-boss worker (src/worker.ts)
+packages/core         pure TS: pricing engine, adapter contract, PII scrubber
+supabase/migrations   full SQL schema + RLS (17 tables, storefront views)
 ```
 
-```
-Dashboard ──insert──▶ import_jobs ──sweep (5s)──▶ pg-boss ──▶ adapter
-                                                              │ aliexpress (DS API)
-                                                              │ generic (JSON-LD/OG)
-                                                              ▼
-                     listings ◀──price via @loqta/core── source_products
-                        ▲                                      ▲
-                   storefront view                    sync.tick (*/15m, tiered)
-```
+- **One backend serves everything**: `app.{ROOT_DOMAIN}` → dashboard dist,
+  `{slug}.{ROOT_DOMAIN}` → storefront dist with per-URL OpenGraph + JSON-LD
+  injection (WhatsApp/Facebook unfurls — the primary sales channel).
+- **Shared catalog**: one supplier URL = one `source_products` row, synced
+  once regardless of how many merchants list it. Merchants own `listings`
+  on top with their own prices/content.
+- **COD checkout** recomputes every price server-side from the DB; the
+  request schema cannot even carry a price field.
+- **Profit = order-time snapshots** (`unit_cost_snapshot`,
+  `fx_rate_snapshot`) — never live supplier prices (EGP volatility).
+- **Sync policies** per store: `pause_only` (default), `auto_apply`,
+  `require_approval`. Out-of-stock pauses under every policy;
+  back-in-stock never auto-reactivates.
 
-**Data flow guarantees**
+## Quickstart (local)
 
-- `source_products` are written **only** by the worker (service role). Merchants read them via RLS.
-- The public storefront reads **only** `storefront_stores` / `storefront_listings` views — `cost_snapshot` (the merchant's cost) is never exposed to anon.
-- Orders have **no public INSERT policy**: checkout (Phase 1) runs server-side with the admin client and re-validates every price from the DB.
-- Profit reporting uses **cost snapshots at order time** (`order_items.unit_cost_snapshot`, `fx_rate_snapshot`) — never live supplier prices. EGP moves; snapshots don't.
-
-## Quickstart
+Requirements: Node 20+, pnpm 9 (`npm i -g pnpm@9`), a Supabase project.
 
 ```bash
-# 0. prerequisites: Node 20+, pnpm 9, a Supabase project, Supabase CLI
-
-# 1. install
 pnpm install
+npx playwright install chromium          # scraper browser (once)
 
-# 2. database
-supabase link --project-ref <your-ref>
-supabase db push          # applies supabase/migrations/*
+# 1. Apply migrations to your Supabase project
+#    (supabase CLI: supabase link && supabase db push, or run the SQL
+#     files in supabase/migrations/ in order)
 
-# 3. env
-cp apps/web/.env.example apps/web/.env.local
-cp apps/worker/.env.example apps/worker/.env
-#    fill Supabase URL/keys + DATABASE_URL (direct connection, port 5432)
+# 2. Environment
+cp backend/.env.example backend/.env                       # fill in
+cp frontend/dashboard/.env.example frontend/dashboard/.env # fill in
+cp frontend/storefront/.env.example frontend/storefront/.env
 
-# 4. run
-pnpm dev:web              # http://localhost:3000
-pnpm dev:worker           # separate terminal
-
-# 5. try it
-#    login → create store → paste a product URL from any JSON-LD-emitting
-#    store (WooCommerce/Shopify/Salla-style) → watch the listing appear.
-#    Dev storefront: http://{slug}.localhost:3000  (or /s/{slug})
+# 3. Run (three terminals)
+pnpm dev:api          # Fastify on :3001
+pnpm dev:worker       # pg-boss worker (imports + sync)
+pnpm dev:dashboard    # Vite on :5173
+pnpm dev:storefront   # Vite on :5174  (open with ?store=<slug>)
 ```
 
-First `pnpm dev:worker` run also needs Chromium: `pnpm --filter @loqta/worker exec playwright install chromium`.
+Verify: `pnpm -r typecheck && pnpm -r test && pnpm -r build`,
+then `node scripts/check-bundle-size.mjs` (storefront budget gate).
 
-## Import sources (adapter registry)
+### DATABASE_URL — read this or the worker won't start
 
-| Adapter | Status | Notes |
-|---|---|---|
-| `generic` | ✅ working | JSON-LD `Product` first, OpenGraph fallback. Covers most local Egyptian supplier sites. No per-site CSS selectors (they rot). |
-| `aliexpress` | 🔑 needs credentials | Official **Dropshipping API** only — apply at open.aliexpress.com **now** (approval is slow). Scraping AliExpress is blocked + against ToS. |
-| blocked sites | optional | Set `SCRAPER_API_KEY` to route generic fetches through a scraping API instead of local Playwright. Don't build your own proxy farm. |
+pg-boss needs a **direct/session** Postgres connection, never the
+transaction pooler. On IPv4-only networks (most home ISPs, Railway) the
+direct host `db.<ref>.supabase.co` does NOT resolve (it is IPv6-only).
+Use the Supavisor **session** pooler instead:
 
-## Pricing
-
-Ordered step pipeline (`packages/core`), stored as jsonb per store/listing:
-
-```json
-[{"type":"fx_buffer","pct":5},
- {"type":"margin_pct","pct":30},
- {"type":"min_profit","amount":50},
- {"type":"round_to_ending","ending":99}]
+```
+postgresql://postgres.<PROJECT_REF>:<PASSWORD>@aws-0-<REGION>.pooler.supabase.com:5432/postgres
 ```
 
-Every new store gets a default rule via DB trigger. `computeRetail()` returns retail, effective cost, profit, and a human-readable trace for the dashboard preview.
+Find the exact host under Supabase → Settings → Database → "Session mode".
 
-## Sync policies (per store)
+## Environment variables
 
-| Policy | Supplier price change | Supplier out of stock |
+| backend/.env | required | notes |
 |---|---|---|
-| `pause_only` (default) | notify | auto-pause listing + notify |
-| `auto_apply` | recompute retail from rule + notify | auto-pause + notify |
-| `require_approval` | notify only | auto-pause + notify |
+| `DATABASE_URL` | ✔ | session pooler, see above |
+| `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | ✔ | server-only, never in git |
+| `SUPABASE_JWT_SECRET` | legacy | HS256 projects only; JWKS auto-detected otherwise |
+| `PORT`, `ROOT_DOMAIN`, `CORS_ORIGINS` | ✔ | prod is same-origin; CORS is for Vite dev |
+| `GEMINI_API_KEY` | for AI rewrite | Google AI Studio |
+| `SCRAPER_API_KEY` | optional | fallback transport for bot-shielded sites |
+| `ALIEXPRESS_APP_KEY/SECRET` | optional | official Dropshipping API (never scraped) |
+| `SENTRY_DSN`, `SENTRY_ENVIRONMENT` | recommended | |
+| `IMPORT_SWEEP_MS`, `SYNC_BATCH_SIZE` | defaults ok | |
 
-Retail prices are **never changed silently** — that breaks running ad campaigns. Back-in-stock never auto-reactivates; the merchant decides.
+Frontends: `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` (dashboard only),
+`VITE_API_URL` (empty in prod = same origin), `VITE_SENTRY_DSN`.
 
-Sync tiers: 1 = hourly, 2 = every 6h, 3 = daily. `sync.tick` fans out every 15 min with per-product `singletonKey` dedup and retry/backoff.
+Real values live ONLY in `.env` files (gitignored). `.env.example` stays
+placeholders.
 
-## Security notes
+## Deploy (Railway + wildcard DNS)
 
-- RLS on every table; tenancy = `is_store_owner()`. Worker uses the direct DB role (bypasses RLS by design) and is the sole writer of the source catalog.
-- `SUPABASE_SERVICE_ROLE_KEY` is server-only. Never `NEXT_PUBLIC_`. Never in git. Never in chat logs.
-- `store_payment_credentials` holds merchant gateway keys — **encrypt via Supabase Vault/pgsodium before production**.
-- Import URLs pass an SSRF guard in the server action; also network-isolate the worker (defense in depth).
-- Scraping ethics/legals: rate-limit per domain, respect robots.txt where feasible, and the ToS must state merchants are responsible for their rights to supplier content. Watermark removal is intentionally **not** a feature.
+One Docker image, two Railway services:
 
-## Roadmap
+```bash
+docker build -f backend/Dockerfile --build-arg GITHUB_SHA=$(git rev-parse HEAD) .
+```
 
-- **Phase 1 — Sell something:** product page + cart + COD checkout (admin-client server action), order management, listing editor (publish/price/images), storefront polish.
-- **Phase 2 — Trust the sync:** fx refresh job, sync health dashboard, approval flow for `require_approval`, per-domain rate limits.
-- **Phase 3 — Content:** Gemini rewriter UI (job exists), image pipeline to Storage (crop/logo overlay client-side; background removal on worker), auto-generated policy pages (AR/EN).
-- **Phase 4 — Operate:** Paymob (merchant keys), analytics (revenue − snapshot cost − fees), fulfillment: CSV export + **WhatsApp notify to local suppliers**, AliExpress DS order creation.
-- **Phase 5 — Scale the SaaS:** subscriptions/limits enforcement (tables ready), custom domains, supplier portal, team members.
+| service | start command | needs |
+|---|---|---|
+| `loqta-api` | `node backend/dist/server.js` (image default) | all backend env vars, public networking |
+| `loqta-worker` | `node backend/dist/worker.js` | same env vars, no public networking |
+
+DNS (points at `loqta-api`):
+
+```
+app.loqta.shop      CNAME  <railway api domain>
+*.loqta.shop        CNAME  <railway api domain>
+```
+
+Add both `app.loqta.shop` and `*.loqta.shop` as custom domains on the api
+service so Railway issues certificates for them.
+
+After first deploy: share a product link in WhatsApp and check the unfurl,
+then validate with the [Facebook Sharing Debugger](https://developers.facebook.com/tools/debug/).
+
+## Sentry
+
+All three surfaces init Sentry with `release = git SHA` and environment
+tags. **PII scrubbing is mandatory and shared**: every `beforeSend` runs
+`@loqta/core`'s scrubber (Egyptian phone patterns, emails, `customer_*`
+keys). Request bodies are never attached. The storefront loads the SDK as
+a lazy chunk (early errors are buffered and flushed) and can tunnel
+through `POST /v1/monitoring` so ad-blockers don't eat events.
+
+Source maps upload only when `SENTRY_AUTH_TOKEN` is set (plus
+`SENTRY_ORG` / `SENTRY_PROJECT`): the Vite builds pick it up
+automatically; for the backend run
+`npx @sentry/cli sourcemaps inject backend/dist && npx @sentry/cli sourcemaps upload backend/dist`
+in the deploy pipeline. Builds never fail without the token.
+
+## Testing
+
+```bash
+pnpm -r test    # vitest: pricing engine, PII scrubber, SSRF guard,
+                # adapter HTML fixtures, checkout recomputation (tamper),
+                # sync-policy matrix, order transitions, CSV, SEO injection
+pnpm lint
+```
+
+CI (`.github/workflows/ci.yml`) runs install → lint → typecheck → test →
+build ×3 → storefront bundle budget on every push/PR.
+
+## Security invariants (do not break in refactors)
+
+- `source_products` is written only by the worker (service role).
+- Anonymous storefront traffic reads only the `storefront_*` views —
+  `cost_snapshot` never crosses that line.
+- `orders` has no public INSERT policy; checkout is server-side only.
+- Import URLs pass an SSRF guard (private ranges blocked) and platform
+  policy (no Amazon; AliExpress via the official API only, never scraped).
+- The scraper is polite per host: 5s spacing, exponential backoff on
+  403/429. No proxy farms, no watermark removal.

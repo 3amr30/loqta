@@ -1,6 +1,26 @@
 import { GoogleGenAI } from "@google/genai";
+import { z } from "zod";
 import { query, queryOne, notify } from "../../lib/db";
 import type { GenerateContentPayload } from "../queues";
+
+/** Model output contract - drift is non-fatal but never blindly trusted. */
+export const GeminiContentSchema = z
+  .object({
+    title_ar: z.string().trim().min(3).max(120).optional(),
+    title_en: z.string().trim().max(120).optional(),
+    description_ar: z.string().trim().max(3000).optional(),
+    description_en: z.string().trim().max(3000).optional(),
+    seo: z
+      .object({
+        meta_title: z.string().max(90).optional(),
+        meta_description: z.string().max(220).optional(),
+        keywords: z.array(z.string().max(60)).max(8).optional(),
+      })
+      .optional(),
+  })
+  .refine((c) => c.title_ar || c.description_ar, {
+    message: "model returned neither Arabic title nor description",
+  });
 
 /**
  * Rewrites the scraped supplier description into unique, Arabic-first,
@@ -60,13 +80,23 @@ export async function handleGenerateContent(payload: GenerateContentPayload) {
   });
 
   const text = (res.text ?? "").replace(/^```json\s*|```\s*$/g, "").trim();
-  let content: Record<string, unknown>;
+  let raw: unknown;
   try {
-    content = JSON.parse(text);
+    raw = JSON.parse(text);
   } catch {
     console.error("[content.generate] unparseable model output for", listing.id);
-    return;
+    return; // non-fatal: original content stays
   }
+  const parsed = GeminiContentSchema.safeParse(raw);
+  if (!parsed.success) {
+    console.error(
+      "[content.generate] model output failed schema for",
+      listing.id,
+      parsed.error.issues.map((i) => i.path.join(".")).join(","),
+    );
+    return; // non-fatal: original content stays
+  }
+  const content = parsed.data;
 
   await query(
     `update listings set
