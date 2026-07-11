@@ -13,6 +13,7 @@ import Orders from "./pages/Orders";
 import OrderDetail from "./pages/OrderDetail";
 import Settings from "./pages/Settings";
 import PricingRules from "./pages/PricingRules";
+import PriceChanges from "./pages/PriceChanges";
 import Stats from "./pages/Stats";
 
 interface Me {
@@ -48,6 +49,7 @@ function Protected() {
         <Route path="orders/:id" element={<OrderDetail />} />
         <Route path="settings" element={<Settings />} />
         <Route path="pricing" element={<PricingRules />} />
+        <Route path="approvals" element={<PriceChanges />} />
         <Route path="stats" element={<Stats />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

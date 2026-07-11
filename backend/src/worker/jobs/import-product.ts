@@ -9,7 +9,8 @@ import {
 import { resolveAdapter } from "../adapters";
 import { FX_STALE_NOTE, getFxRate } from "../lib/fx";
 import { notify, query, queryOne } from "../../lib/db";
-import { Q, type ImportProductPayload } from "../queues";
+import { Q, type ImportProductPayload, type ProcessImagePayload } from "../queues";
+import { imageStoragePath } from "./process-image";
 
 /**
  * Sweep the import_jobs intake table (filled by the dashboard via RLS) and
@@ -38,7 +39,7 @@ export async function sweepImportJobs(boss: PgBoss) {
   }
 }
 
-export async function handleImportProduct(payload: ImportProductPayload) {
+export async function handleImportProduct(payload: ImportProductPayload, boss: PgBoss) {
   const job = await queryOne<{
     id: string;
     store_id: string;
@@ -55,7 +56,11 @@ export async function handleImportProduct(payload: ImportProductPayload) {
 
     const supplierId = job.supplier_id ?? (await ensureSupplier(adapter.id, job.url));
     const sourceProductId = await upsertSourceProduct(supplierId, product);
-    const { id: listingId, fxStale } = await createListing(job.store_id, sourceProductId, product);
+    const { id: listingId, fxStale, existed } = await createListing(
+      job.store_id,
+      sourceProductId,
+      product,
+    );
 
     await query(
       `update import_jobs
@@ -63,12 +68,27 @@ export async function handleImportProduct(payload: ImportProductPayload) {
        where id = $1`,
       [job.id, sourceProductId, listingId],
     );
+
+    // New listings get their supplier images mirrored to Storage (stop hotlinking).
+    if (!existed) {
+      for (const imageUrl of product.images.slice(0, 6)) {
+        await boss.send(Q.processImage, { listingId, imageUrl } satisfies ProcessImagePayload, {
+          singletonKey: imageStoragePath(listingId, imageUrl),
+          retryLimit: 2,
+          retryDelay: 30,
+          retryBackoff: true,
+        });
+      }
+    }
+
     await notify(
       job.store_id,
       "import_done",
-      "تم استيراد المنتج",
-      product.title + (fxStale ? FX_STALE_NOTE : ""),
-      { listingId },
+      existed ? "المنتج موجود بالفعل" : "تم استيراد المنتج",
+      existed
+        ? `${product.title} — المنتج ده موجود في متجرك من قبل، ما اتعملتش نسخة جديدة.`
+        : product.title + (fxStale ? FX_STALE_NOTE : ""),
+      { listingId, duplicate: existed },
     );
   } catch (err) {
     const message =
@@ -168,12 +188,14 @@ async function createListing(
   storeId: string,
   sourceProductId: string,
   p: ScrapedProduct,
-): Promise<{ id: string; fxStale: boolean }> {
+): Promise<{ id: string; fxStale: boolean; existed: boolean }> {
   const existing = await queryOne<{ id: string }>(
     `select id from listings where store_id = $1 and source_product_id = $2`,
     [storeId, sourceProductId],
   );
-  if (existing) return { id: existing.id, fxStale: false };
+  // Duplicate import: unique(store_id, source_product_id) row already exists —
+  // reuse it and tell the merchant instead of pretending it's new.
+  if (existing) return { id: existing.id, fxStale: false, existed: true };
 
   const store = await queryOne<{ currency: string }>(
     `select currency from stores where id = $1`,
@@ -213,7 +235,7 @@ async function createListing(
       rule?.id ?? null,
     ],
   );
-  return { id: row!.id, fxStale: fx.stale };
+  return { id: row!.id, fxStale: fx.stale, existed: false };
 }
 
 function makeSlug(title: string): string {

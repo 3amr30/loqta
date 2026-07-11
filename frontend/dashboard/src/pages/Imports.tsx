@@ -15,6 +15,7 @@ interface ImportJob {
   status: "queued" | "processing" | "done" | "failed";
   error: string | null;
   listing_id: string | null;
+  duplicate: boolean;
   created_at: string;
 }
 
@@ -89,6 +90,11 @@ export default function Imports() {
                 </td>
                 <td className="p-3">
                   <StatusBadge status={j.status} />
+                  {j.duplicate && (
+                    <span className="ms-2 rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-600">
+                      موجود من قبل
+                    </span>
+                  )}
                   {j.error && <p className="mt-1 text-xs text-red-600">{j.error}</p>}
                 </td>
                 <td className="p-3 text-stone-500">

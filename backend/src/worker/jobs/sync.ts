@@ -1,15 +1,12 @@
 import type PgBoss from "pg-boss";
-import {
-  AdapterError,
-  computeRetail,
-  contentFingerprint,
-  parsePricingSteps,
-} from "@loqta/core";
+import { AdapterError, contentFingerprint } from "@loqta/core";
 import { resolveAdapter } from "../adapters";
-import { FX_STALE_NOTE, getFxRate } from "../lib/fx";
+import { FX_STALE_NOTE } from "../lib/fx";
 import { notify, query, queryOne } from "../../lib/db";
+import { repriceListing } from "../../services/reprice";
 import { Q, type SyncProductPayload } from "../queues";
 import { decideSyncActions, type PriceMode, type SyncPolicy } from "./sync-policy";
+import { rotateSyncTiers } from "./sync-tiers";
 
 /**
  * Runs every 15 min (pg-boss schedule). Tiered frequency keeps scraping
@@ -17,6 +14,7 @@ import { decideSyncActions, type PriceMode, type SyncPolicy } from "./sync-polic
  * tier 3 = daily (dead listings). singletonKey dedupes overlapping ticks.
  */
 export async function handleSyncTick(boss: PgBoss) {
+  await rotateSyncTiers(); // order velocity promotes/demotes tiers before selection
   const batch = Number(process.env.SYNC_BATCH_SIZE ?? 25);
   const due = await query<{ id: string }>(
     `select id from source_products
@@ -123,7 +121,7 @@ export async function handleSyncProduct(payload: SyncProductPayload) {
 /**
  * Price changed at the supplier. Per store sync_policy:
  *   auto_apply       -> recompute retail from the pricing rule + notify
- *   require_approval -> notify only (nothing on the listing moves)
+ *   require_approval -> queue a pending_price_changes row + notify
  *   pause_only       -> notify only
  * Silent retail changes can break a merchant's running ad campaigns, so
  * "notify" is always part of the deal.
@@ -135,16 +133,12 @@ async function applyPricePolicies(
   oldCost: number,
 ) {
   const listings = await query<{
-    id: string; store_id: string; currency: string; retail_price: string;
-    price_mode: string; sync_policy: string; steps: unknown | null;
+    id: string; store_id: string; retail_price: string;
+    price_mode: string; sync_policy: string;
   }>(
-    `select l.id, l.store_id, l.currency, l.retail_price, l.price_mode,
-            s.sync_policy, pr.steps
+    `select l.id, l.store_id, l.retail_price, l.price_mode, s.sync_policy
      from listings l
      join stores s on s.id = l.store_id
-     left join pricing_rules pr
-       on pr.id = coalesce(l.pricing_rule_id,
-            (select id from pricing_rules where store_id = l.store_id and is_default limit 1))
      where l.source_product_id = $1 and l.status <> 'archived'`,
     [sourceProductId],
   );
@@ -158,20 +152,29 @@ async function applyPricePolicies(
       { priceChanged: true, wentOutOfStock: false, backInStock: false },
     );
     if (actions.reprice) {
-      const fx = await getFxRate(costCurrency, l.currency);
-      const pricing = computeRetail({
-        cost: newCost,
-        fxRate: fx.rate,
-        steps: parsePricingSteps(l.steps ?? []),
-      });
-      await query(
-        `update listings
-         set retail_price = $2, cost_snapshot = $3, fx_rate_snapshot = $4
-         where id = $1`,
-        [l.id, pricing.retail, pricing.effectiveCost, fx.rate],
-      );
+      // Same path the approval route uses (services/reprice) — never drifts.
+      const r = await repriceListing(l.id, newCost, costCurrency);
+      if (!r) continue;
       await notify(l.store_id, "price_changed", "تم تحديث سعر المنتج تلقائيًا",
-        `${body} — سعر البيع الجديد: ${pricing.retail} ${l.currency}${fx.stale ? FX_STALE_NOTE : ""}`, { listingId: l.id });
+        `${body} — سعر البيع الجديد: ${r.retail} ${r.currency}${r.fxStale ? FX_STALE_NOTE : ""}`, { listingId: l.id });
+    } else if (actions.queueApproval) {
+      // A newer supplier change supersedes any still-pending row for this listing.
+      await query(
+        `update pending_price_changes set status = 'superseded', decided_at = now()
+         where listing_id = $1 and status = 'pending'`,
+        [l.id],
+      );
+      const preview = await repriceListing(l.id, newCost, costCurrency, { dryRun: true });
+      await query(
+        `insert into pending_price_changes
+           (listing_id, store_id, source_product_id, old_cost, new_cost, cost_currency,
+            old_retail, proposed_retail)
+         values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [l.id, l.store_id, sourceProductId, oldCost, newCost, costCurrency,
+         Number(l.retail_price), preview?.retail ?? null],
+      );
+      await notify(l.store_id, "price_approval", "تغيير سعر بانتظار موافقتك",
+        `${body} — راجع صفحة الموافقات للتطبيق أو التجاهل`, { listingId: l.id });
     } else {
       await notify(l.store_id, "price_changed", "سعر المورد اتغير", body, { listingId: l.id });
     }

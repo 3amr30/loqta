@@ -7,8 +7,12 @@ interface Store {
   name: string;
   slug: string;
   logo_url: string | null;
+  whatsapp_phone: string | null;
   sync_policy: "pause_only" | "auto_apply" | "require_approval";
-  settings: { shipping_fee?: number };
+  settings: {
+    shipping_fee?: number;
+    notify?: { email_new_order?: boolean; whatsapp_new_order?: boolean };
+  };
 }
 
 const POLICIES = [
@@ -37,6 +41,9 @@ export default function Settings() {
   const [logo, setLogo] = useState("");
   const [fee, setFee] = useState("0");
   const [policy, setPolicy] = useState<Store["sync_policy"]>("pause_only");
+  const [wa, setWa] = useState("");
+  const [emailNewOrder, setEmailNewOrder] = useState(true);
+  const [waNewOrder, setWaNewOrder] = useState(false);
   const [saved, setSaved] = useState(false);
 
   const store = me.data?.store;
@@ -46,6 +53,9 @@ export default function Settings() {
       setLogo(store.logo_url ?? "");
       setFee(String(store.settings?.shipping_fee ?? 0));
       setPolicy(store.sync_policy);
+      setWa(store.whatsapp_phone ?? "");
+      setEmailNewOrder(store.settings?.notify?.email_new_order ?? true);
+      setWaNewOrder(store.settings?.notify?.whatsapp_new_order ?? false);
     }
   }, [store]);
 
@@ -57,7 +67,11 @@ export default function Settings() {
           name,
           logo_url: logo || null,
           sync_policy: policy,
-          settings: { shipping_fee: Math.max(0, Number(fee) || 0) },
+          whatsapp_phone: wa || null,
+          settings: {
+            shipping_fee: Math.max(0, Number(fee) || 0),
+            notify: { email_new_order: emailNewOrder, whatsapp_new_order: waNewOrder },
+          },
         },
       }),
     onSuccess: () => {
@@ -90,6 +104,24 @@ export default function Settings() {
             className="w-36 rounded-lg border border-stone-300 p-3 text-left focus:border-amber-500 focus:outline-none" />
           <p className="mt-1 text-xs text-stone-400">بتتضاف على كل طلب دفع عند الاستلام.</p>
         </div>
+      </section>
+
+      <section className="space-y-3 rounded-xl border border-stone-200 bg-white p-5">
+        <h2 className="font-bold">التنبيهات 🔔</h2>
+        <div>
+          <label className="mb-1 block text-sm font-medium">رقم واتساب المتجر (بصيغة دولية)</label>
+          <input value={wa} onChange={(e) => setWa(e.target.value)} dir="ltr" placeholder="+201012345678"
+            className="w-56 rounded-lg border border-stone-300 p-3 text-left focus:border-amber-500 focus:outline-none" />
+          <p className="mt-1 text-xs text-stone-400">بتوصلك عليه تنبيهات الطلبات لو فعّلتها، وهيظهر كزرار تواصل في متجرك قريبًا.</p>
+        </div>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={emailNewOrder} onChange={(e) => setEmailNewOrder(e.target.checked)} className="accent-amber-500" />
+          إيميل عند وصول طلب جديد
+        </label>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={waNewOrder} onChange={(e) => setWaNewOrder(e.target.checked)} className="accent-amber-500" />
+          رسالة واتساب عند وصول طلب جديد
+        </label>
       </section>
 
       <section className="rounded-xl border border-stone-200 bg-white p-5">

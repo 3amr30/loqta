@@ -15,6 +15,14 @@ const EnvSchema = z.object({
   ALIEXPRESS_APP_SECRET: z.string().optional(),
   SENTRY_DSN: z.string().optional(),
   SENTRY_ENVIRONMENT: z.string().default("development"),
+  // WhatsApp (Twilio) + email (Resend) — all optional; features flag off by absence.
+  PUBLIC_API_URL: z.string().url().optional(),
+  TWILIO_ACCOUNT_SID: z.string().optional(),
+  TWILIO_AUTH_TOKEN: z.string().optional(),
+  TWILIO_WHATSAPP_NUMBER: z.string().optional(),
+  TWILIO_CONTENT_SID_MERCHANT_ALERT: z.string().optional(),
+  RESEND_API_KEY: z.string().optional(),
+  NOTIFY_EMAIL_FROM: z.string().optional(),
   IMPORT_SWEEP_MS: z.coerce.number().int().positive().default(5000),
   SYNC_BATCH_SIZE: z.coerce.number().int().positive().default(25),
 });

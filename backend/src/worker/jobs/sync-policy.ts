@@ -25,6 +25,8 @@ export type SyncNotification = "price_changed" | "out_of_stock" | "back_in_stock
 export interface SyncActions {
   /** recompute retail from the pricing rule + update snapshots */
   reprice: boolean;
+  /** create a pending_price_changes row for the merchant to approve/reject */
+  queueApproval: boolean;
   /** set listing to paused */
   pause: boolean;
   /** never reactivate automatically - always false, kept explicit */
@@ -35,12 +37,16 @@ export interface SyncActions {
 export function decideSyncActions(ctx: SyncListingCtx, change: SyncChange): SyncActions {
   const notifications: SyncNotification[] = [];
   let reprice = false;
+  let queueApproval = false;
   let pause = false;
 
   if (change.priceChanged) {
     notifications.push("price_changed"); // always - never silent
-    if (ctx.policy === "auto_apply" && ctx.priceMode === "rule") {
-      reprice = true;
+    if (ctx.priceMode === "rule") {
+      if (ctx.policy === "auto_apply") reprice = true;
+      // require_approval: nothing on the listing moves until the merchant
+      // approves; the queue row is what the approval UI acts on.
+      if (ctx.policy === "require_approval") queueApproval = true;
     }
   }
   if (change.wentOutOfStock) {
@@ -51,5 +57,5 @@ export function decideSyncActions(ctx: SyncListingCtx, change: SyncChange): Sync
     notifications.push("back_in_stock"); // notify only; price may have moved too
   }
 
-  return { reprice, pause, reactivate: false, notifications };
+  return { reprice, queueApproval, pause, reactivate: false, notifications };
 }

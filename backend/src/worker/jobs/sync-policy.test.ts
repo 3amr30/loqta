@@ -47,7 +47,39 @@ describe("decideSyncActions", () => {
 
   it("no change means no actions", () => {
     const a = decideSyncActions({ policy: "auto_apply", priceMode: "rule" }, NO_CHANGE);
-    expect(a).toEqual({ reprice: false, pause: false, reactivate: false, notifications: [] });
+    expect(a).toEqual({
+      reprice: false,
+      queueApproval: false,
+      pause: false,
+      reactivate: false,
+      notifications: [],
+    });
+  });
+
+  it("require_approval + rule queues an approval instead of repricing", () => {
+    const a = decideSyncActions(
+      { policy: "require_approval", priceMode: "rule" },
+      { ...NO_CHANGE, priceChanged: true },
+    );
+    expect(a.queueApproval).toBe(true);
+    expect(a.reprice).toBe(false);
+    expect(a.notifications).toContain("price_changed");
+  });
+
+  it("require_approval + manual mode: notify only, nothing to approve by rule", () => {
+    const a = decideSyncActions(
+      { policy: "require_approval", priceMode: "manual" },
+      { ...NO_CHANGE, priceChanged: true },
+    );
+    expect(a.queueApproval).toBe(false);
+    expect(a.reprice).toBe(false);
+  });
+
+  it("queueApproval is exclusive to require_approval", () => {
+    for (const policy of ["pause_only", "auto_apply"] as SyncPolicy[]) {
+      const a = decideSyncActions({ policy, priceMode: "rule" }, { ...NO_CHANGE, priceChanged: true });
+      expect(a.queueApproval, policy).toBe(false);
+    }
   });
 
   it("combined price-up + OOS: reprices AND pauses AND notifies both", () => {

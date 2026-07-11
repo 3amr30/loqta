@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
+import formbody from "@fastify/formbody";
 import rateLimit from "@fastify/rate-limit";
 import type { Config } from "./config";
 import { registerErrorHandler } from "./plugins/error-handler";
@@ -17,6 +18,8 @@ import { ordersRoutes } from "./routes/v1/orders";
 import { notificationsRoutes } from "./routes/v1/notifications";
 import { aiRoutes } from "./routes/v1/ai";
 import { statsRoutes } from "./routes/v1/stats";
+import { priceChangesRoutes } from "./routes/v1/price-changes";
+import { webhookRoutes } from "./routes/v1/webhooks";
 
 /** App factory - server.ts wires it to the network; tests use inject(). */
 export async function buildApp(config: Config): Promise<FastifyInstance> {
@@ -27,6 +30,7 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
     await app.register(cors, { origin: origins });
   }
   await app.register(rateLimit, { global: false });
+  await app.register(formbody); // Twilio webhooks post application/x-www-form-urlencoded
 
   registerErrorHandler(app);
   registerAuth(app, config);
@@ -47,6 +51,8 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   notificationsRoutes(app);
   aiRoutes(app);
   statsRoutes(app);
+  priceChangesRoutes(app);
+  webhookRoutes(app, config);
 
   // Built SPA locations: <repo>/frontend/*/dist relative to backend/.
   const repoRoot = fileURLToPath(new URL("../..", import.meta.url));

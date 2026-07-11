@@ -54,9 +54,23 @@ export async function notify(
   body: string | null,
   data: Record<string, unknown> = {},
 ) {
-  await query(
+  const row = await queryOne<{ id: string }>(
     `insert into notifications (store_id, type, title, body, data)
-     values ($1, $2::notification_type, $3, $4, $5)`,
+     values ($1, $2::notification_type, $3, $4, $5)
+     returning id`,
     [storeId, type, title, body, JSON.stringify(data)],
   );
+  // Mirror to email/WhatsApp via the worker (PLAN-GROWTH §1.2). The row above
+  // is the source of truth — a dispatch-enqueue failure must never break
+  // checkout or sync, so it only warns. Dynamic imports keep pg-boss out of
+  // unit tests that import this module.
+  try {
+    if (row) {
+      const { getBoss } = await import("./queue");
+      const { Q } = await import("../worker/queues");
+      await (await getBoss()).send(Q.notifyDispatch, { notificationId: row.id });
+    }
+  } catch (err) {
+    console.warn("[notify] dispatch enqueue failed:", err);
+  }
 }

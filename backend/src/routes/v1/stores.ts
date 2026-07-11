@@ -22,11 +22,28 @@ export const UpdateStoreSchema = z
     name: z.string().trim().min(1).max(80).optional(),
     logo_url: z.string().url().nullable().optional(),
     sync_policy: z.enum(["pause_only", "auto_apply", "require_approval"]).optional(),
-    settings: z.object({ shipping_fee: z.number().min(0).optional() }).strict().optional(),
+    whatsapp_phone: z
+      .string()
+      .regex(/^\+[1-9]\d{7,14}$/, "International format, e.g. +201012345678")
+      .nullable()
+      .optional(),
+    settings: z
+      .object({
+        shipping_fee: z.number().min(0).optional(),
+        notify: z
+          .object({
+            email_new_order: z.boolean().optional(),
+            whatsapp_new_order: z.boolean().optional(),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
-const STORE_COLS = `id, name, slug, currency, logo_url, settings, sync_policy, created_at`;
+const STORE_COLS = `id, name, slug, currency, logo_url, settings, sync_policy, whatsapp_phone, created_at`;
 
 function isUniqueViolation(err: unknown): boolean {
   return typeof err === "object" && err !== null && (err as { code?: string }).code === "23505";
@@ -59,10 +76,11 @@ export function storesRoutes(app: FastifyInstance) {
     const body = UpdateStoreSchema.parse(req.body);
     const store = await queryOne(
       `update stores set
-         name        = coalesce($2, name),
-         logo_url    = case when $5 then $3 else logo_url end,
-         sync_policy = coalesce($4::sync_policy, sync_policy),
-         settings    = settings || $6::jsonb
+         name           = coalesce($2, name),
+         logo_url       = case when $5 then $3 else logo_url end,
+         sync_policy    = coalesce($4::sync_policy, sync_policy),
+         whatsapp_phone = case when $7 then $8 else whatsapp_phone end,
+         settings       = settings || $6::jsonb
        where id = $1
        returning ${STORE_COLS}`,
       [
@@ -72,6 +90,8 @@ export function storesRoutes(app: FastifyInstance) {
         body.sync_policy ?? null,
         "logo_url" in body, // allows explicit null to clear the logo
         JSON.stringify(body.settings ?? {}),
+        "whatsapp_phone" in body, // same explicit-null pattern
+        body.whatsapp_phone ?? null,
       ],
     );
     return { store };

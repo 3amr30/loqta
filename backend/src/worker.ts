@@ -3,11 +3,12 @@ import PgBoss from "pg-boss";
 import { initSentry, runJob } from "./lib/sentry";
 import { endPool } from "./lib/db";
 import { closeBrowser } from "./worker/lib/browser";
-import { Q, type GenerateContentPayload, type ImportProductPayload, type ProcessImagePayload, type SyncProductPayload } from "./worker/queues";
+import { Q, type GenerateContentPayload, type ImportProductPayload, type NotifyDispatchPayload, type ProcessImagePayload, type SyncProductPayload } from "./worker/queues";
 import { handleImportProduct, sweepImportJobs } from "./worker/jobs/import-product";
 import { handleSyncProduct, handleSyncTick } from "./worker/jobs/sync";
 import { handleGenerateContent } from "./worker/jobs/generate-content";
 import { handleProcessImage } from "./worker/jobs/process-image";
+import { handleNotifyDispatch } from "./worker/jobs/dispatch-notification";
 
 /**
  * Loqta worker — the only component that scrapes, syncs, and writes to the
@@ -34,7 +35,7 @@ async function main() {
   await boss.work<ImportProductPayload>(Q.importProduct, { batchSize: 3 }, async (jobs) => {
     for (const job of jobs)
       await runJob(Q.importProduct, job.id, { importJobId: job.data.importJobId }, () =>
-        handleImportProduct(job.data),
+        handleImportProduct(job.data, boss),
       );
   });
 
@@ -60,6 +61,13 @@ async function main() {
     for (const job of jobs)
       await runJob(Q.processImage, job.id, { listingId: job.data.listingId }, () =>
         handleProcessImage(job.data),
+      );
+  });
+
+  await boss.work<NotifyDispatchPayload>(Q.notifyDispatch, { batchSize: 5 }, async (jobs) => {
+    for (const job of jobs)
+      await runJob(Q.notifyDispatch, job.id, { notificationId: job.data.notificationId }, () =>
+        handleNotifyDispatch(job.data),
       );
   });
 

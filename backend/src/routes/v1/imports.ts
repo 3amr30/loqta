@@ -28,22 +28,27 @@ export function importsRoutes(app: FastifyInstance) {
 
   app.get("/v1/imports", { preHandler: (req) => app.requireStore(req) }, async (req) => {
     const q = ListImportsSchema.parse(req.query);
-    const where = [`store_id = $1`];
+    const where = [`ij.store_id = $1`];
     const params: unknown[] = [req.store!.id];
     if (q.status) {
       params.push(q.status);
-      where.push(`status = $${params.length}::job_status`);
+      where.push(`ij.status = $${params.length}::job_status`);
     }
     const whereSql = where.join(" and ");
 
     const total = await queryOne<{ count: string }>(
-      `select count(*) from import_jobs where ${whereSql}`,
+      `select count(*) from import_jobs ij where ${whereSql}`,
       params,
     );
+    // duplicate: the listing predates this job -> the URL was already in the
+    // store (worker reused the existing row instead of creating a copy).
     const data = await query(
-      `select id, url, status, error, listing_id, created_at, processed_at
-       from import_jobs where ${whereSql}
-       order by created_at desc
+      `select ij.id, ij.url, ij.status, ij.error, ij.listing_id, ij.created_at, ij.processed_at,
+              coalesce(l.created_at < ij.created_at, false) as duplicate
+       from import_jobs ij
+       left join listings l on l.id = ij.listing_id
+       where ${whereSql}
+       order by ij.created_at desc
        limit ${PAGE_SIZE} offset ${(q.page - 1) * PAGE_SIZE}`,
       params,
     );
