@@ -45,3 +45,23 @@ export async function api<T = unknown>(
   }
   return (await res.json()) as T;
 }
+
+/** Authenticated binary fetch - CSV export etc. A plain <a href> would 401. */
+export async function apiBlob(path: string): Promise<Blob> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  const res = await fetch(`${API_URL}${path}`, {
+    headers: token ? { authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new ApiError("DOWNLOAD_FAILED", res.status, `HTTP ${res.status}`);
+  return res.blob();
+}
+
+export function saveBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}

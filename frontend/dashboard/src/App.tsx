@@ -9,6 +9,9 @@ import Onboarding from "./pages/Onboarding";
 import Imports from "./pages/Imports";
 import Listings from "./pages/Listings";
 import ListingEdit from "./pages/ListingEdit";
+import Orders from "./pages/Orders";
+import OrderDetail from "./pages/OrderDetail";
+import Settings from "./pages/Settings";
 
 interface Me {
   profile: { id: string; full_name: string };
@@ -39,6 +42,9 @@ function Protected() {
         <Route index element={<Imports />} />
         <Route path="listings" element={<Listings />} />
         <Route path="listings/:id" element={<ListingEdit />} />
+        <Route path="orders" element={<Orders />} />
+        <Route path="orders/:id" element={<OrderDetail />} />
+        <Route path="settings" element={<Settings />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

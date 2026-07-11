@@ -1,9 +1,12 @@
 import { NavLink, Outlet } from "react-router";
+import { NotificationsBell } from "./NotificationsBell";
 import { supabase } from "../lib/supabase";
 
 const NAV = [
+  { to: "/orders", label: "الطلبات" },
   { to: "/", label: "الاستيراد" },
   { to: "/listings", label: "المنتجات" },
+  { to: "/settings", label: "الإعدادات" },
 ];
 
 export function Layout({ storeName }: { storeName: string }) {
@@ -13,7 +16,7 @@ export function Layout({ storeName }: { storeName: string }) {
         <h1 className="mb-1 text-xl font-bold">
           لقطة<span className="text-amber-500">.</span>
         </h1>
-        <p className="mb-6 truncate text-sm text-stone-500">{storeName}</p>
+        <div className="mb-6 flex items-center justify-between"><p className="truncate text-sm text-stone-500">{storeName}</p><NotificationsBell /></div>
         <nav className="flex-1 space-y-1">
           {NAV.map((n) => (
             <NavLink
