@@ -5,6 +5,9 @@ import { registerErrorHandler } from "./plugins/error-handler";
 import { registerAuth } from "./plugins/auth";
 import { meRoutes } from "./routes/v1/me";
 import { storesRoutes } from "./routes/v1/stores";
+import { importsRoutes } from "./routes/v1/imports";
+import { listingsRoutes } from "./routes/v1/listings";
+import { pricingRoutes } from "./routes/v1/pricing";
 
 /** App factory - server.ts wires it to the network; tests use inject(). */
 export async function buildApp(config: Config): Promise<FastifyInstance> {
@@ -25,6 +28,9 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
 
   meRoutes(app);
   storesRoutes(app);
+  importsRoutes(app);
+  listingsRoutes(app);
+  pricingRoutes(app);
 
   return app;
 }
