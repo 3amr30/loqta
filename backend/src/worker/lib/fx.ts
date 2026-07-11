@@ -1,4 +1,4 @@
-import { queryOne } from "./db";
+import { queryOne } from "../../lib/db";
 
 /**
  * FX from the fx_rates table (seeded by migration, refreshed by a future

@@ -7,7 +7,7 @@ import {
 } from "@loqta/core";
 import { resolveAdapter } from "../adapters";
 import { getFxRate } from "../lib/fx";
-import { notify, query, queryOne } from "../lib/db";
+import { notify, query, queryOne } from "../../lib/db";
 import { Q, type SyncProductPayload } from "../queues";
 
 /**

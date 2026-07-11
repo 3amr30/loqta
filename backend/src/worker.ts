@@ -1,12 +1,13 @@
 import "dotenv/config";
 import PgBoss from "pg-boss";
+import { initSentry } from "./lib/sentry";
 import { pool } from "./lib/db";
-import { closeBrowser } from "./lib/browser";
-import { Q, type GenerateContentPayload, type ImportProductPayload, type ProcessImagePayload, type SyncProductPayload } from "./queues";
-import { handleImportProduct, sweepImportJobs } from "./jobs/import-product";
-import { handleSyncProduct, handleSyncTick } from "./jobs/sync";
-import { handleGenerateContent } from "./jobs/generate-content";
-import { handleProcessImage } from "./jobs/process-image";
+import { closeBrowser } from "./worker/lib/browser";
+import { Q, type GenerateContentPayload, type ImportProductPayload, type ProcessImagePayload, type SyncProductPayload } from "./worker/queues";
+import { handleImportProduct, sweepImportJobs } from "./worker/jobs/import-product";
+import { handleSyncProduct, handleSyncTick } from "./worker/jobs/sync";
+import { handleGenerateContent } from "./worker/jobs/generate-content";
+import { handleProcessImage } from "./worker/jobs/process-image";
 
 /**
  * Loqta worker — the only component that scrapes, syncs, and writes to the
@@ -15,6 +16,8 @@ import { handleProcessImage } from "./jobs/process-image";
  * Queue layer: pg-boss (lives inside the same Supabase Postgres, schema
  * `pgboss` — no Redis, one less moving part).
  */
+initSentry("worker");
+
 async function main() {
   const boss = new PgBoss({
     connectionString: process.env.DATABASE_URL!,

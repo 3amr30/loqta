@@ -1,5 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
-import { query, queryOne, notify } from "../lib/db";
+import { query, queryOne, notify } from "../../lib/db";
 import type { GenerateContentPayload } from "../queues";
 
 /**
