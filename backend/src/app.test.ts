@@ -45,7 +45,7 @@ describe("error envelope", () => {
   });
 
   it("unknown routes get the NOT_FOUND envelope", async () => {
-    const res = await app.inject({ url: "/nope" });
+    const res = await app.inject({ url: "/v1/nope" });
     expect(res.statusCode).toBe(404);
     expect(res.json().error.code).toBe("NOT_FOUND");
   });
