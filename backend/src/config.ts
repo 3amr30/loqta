@@ -23,6 +23,10 @@ const EnvSchema = z.object({
   TWILIO_CONTENT_SID_MERCHANT_ALERT: z.string().optional(),
   RESEND_API_KEY: z.string().optional(),
   NOTIFY_EMAIL_FROM: z.string().optional(),
+  // P8 RTO: order-confirmation template, OTP via Verify, checkout token HMAC.
+  TWILIO_CONTENT_SID_ORDER_CONFIRM: z.string().optional(),
+  TWILIO_VERIFY_SERVICE_SID: z.string().optional(),
+  OTP_TOKEN_SECRET: z.string().optional(),
   IMPORT_SWEEP_MS: z.coerce.number().int().positive().default(5000),
   SYNC_BATCH_SIZE: z.coerce.number().int().positive().default(25),
 });
