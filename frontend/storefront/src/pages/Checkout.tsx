@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -7,6 +7,7 @@ import { EGYPT_GOVERNORATES } from "@loqta/core";
 import { api, ApiError } from "../lib/api";
 import { clearCart, useCart } from "../lib/cart";
 import { useStore } from "../StoreContext";
+import { trackInitiateCheckout } from "../lib/track";
 
 const Schema = z.object({
   name: z.string().trim().min(2, "اكتب اسمك").max(80),
@@ -23,6 +24,15 @@ export default function Checkout() {
   const navigate = useNavigate();
   const [serverError, setServerError] = useState<string | null>(null);
   const { register, handleSubmit, formState } = useForm<Form>({ resolver: zodResolver(Schema) });
+
+  // InitiateCheckout fires once when a non-empty cart reaches this page.
+  useEffect(() => {
+    if (!store || items.length === 0) return;
+    const value = items.reduce((s, i) => s + i.unitPrice * i.qty, 0) + store.shipping_fee;
+    const count = items.reduce((s, i) => s + i.qty, 0);
+    trackInitiateCheckout({ value, currency: store.currency, numItems: count });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [store?.slug]);
 
   if (!store) return null;
   if (items.length === 0) {
@@ -56,7 +66,7 @@ export default function Checkout() {
         },
       );
       clearCart();
-      navigate(`/success/${res.orderNumber}`);
+      navigate(`/success/${res.orderNumber}`, { state: { total } });
     } catch (err) {
       if (err instanceof ApiError && err.code === "OUT_OF_STOCK") {
         setServerError("للأسف في منتج خلص من المخزون — راجع السلة.");

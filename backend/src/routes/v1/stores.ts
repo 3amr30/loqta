@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { queryOne } from "../../lib/db";
 import { AppError } from "../../lib/errors";
+import { FB_PIXEL_RE, TIKTOK_PIXEL_RE } from "../../seo/inject";
 
 /** Mirrors the DB check constraint on stores.slug exactly. */
 export const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])$/;
@@ -34,6 +35,25 @@ export const UpdateStoreSchema = z
           .object({
             email_new_order: z.boolean().optional(),
             whatsapp_new_order: z.boolean().optional(),
+          })
+          .strict()
+          .optional(),
+        // Ad pixels: strict shapes only — re-validated again at injection time.
+        fb_pixel_id: z.string().regex(FB_PIXEL_RE, "رقم البيكسل أرقام فقط").nullable().optional(),
+        tiktok_pixel_id: z
+          .string()
+          .regex(TIKTOK_PIXEL_RE, "معرف TikTok Pixel حروف كبيرة وأرقام")
+          .nullable()
+          .optional(),
+        low_stock_threshold: z.number().int().min(0).max(10000).optional(),
+        policies: z
+          .object({
+            refund_ar: z.string().max(20000).optional(),
+            shipping_ar: z.string().max(20000).optional(),
+            privacy_ar: z.string().max(20000).optional(),
+            refund_en: z.string().max(20000).optional(),
+            shipping_en: z.string().max(20000).optional(),
+            privacy_en: z.string().max(20000).optional(),
           })
           .strict()
           .optional(),

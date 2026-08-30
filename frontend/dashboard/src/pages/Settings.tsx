@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "../lib/api";
+import { api, ApiError } from "../lib/api";
 
 interface Store {
   id: string;
@@ -12,6 +12,10 @@ interface Store {
   settings: {
     shipping_fee?: number;
     notify?: { email_new_order?: boolean; whatsapp_new_order?: boolean };
+    fb_pixel_id?: string | null;
+    tiktok_pixel_id?: string | null;
+    low_stock_threshold?: number;
+    policies?: { refund_ar?: string; shipping_ar?: string; privacy_ar?: string };
   };
 }
 
@@ -44,6 +48,13 @@ export default function Settings() {
   const [wa, setWa] = useState("");
   const [emailNewOrder, setEmailNewOrder] = useState(true);
   const [waNewOrder, setWaNewOrder] = useState(false);
+  const [fbPixel, setFbPixel] = useState("");
+  const [tiktokPixel, setTiktokPixel] = useState("");
+  const [lowStock, setLowStock] = useState("5");
+  const [refund, setRefund] = useState("");
+  const [shipping, setShipping] = useState("");
+  const [privacy, setPrivacy] = useState("");
+  const [pixelErr, setPixelErr] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
   const store = me.data?.store;
@@ -56,6 +67,12 @@ export default function Settings() {
       setWa(store.whatsapp_phone ?? "");
       setEmailNewOrder(store.settings?.notify?.email_new_order ?? true);
       setWaNewOrder(store.settings?.notify?.whatsapp_new_order ?? false);
+      setFbPixel(store.settings?.fb_pixel_id ?? "");
+      setTiktokPixel(store.settings?.tiktok_pixel_id ?? "");
+      setLowStock(String(store.settings?.low_stock_threshold ?? 5));
+      setRefund(store.settings?.policies?.refund_ar ?? "");
+      setShipping(store.settings?.policies?.shipping_ar ?? "");
+      setPrivacy(store.settings?.policies?.privacy_ar ?? "");
     }
   }, [store]);
 
@@ -71,13 +88,30 @@ export default function Settings() {
           settings: {
             shipping_fee: Math.max(0, Number(fee) || 0),
             notify: { email_new_order: emailNewOrder, whatsapp_new_order: waNewOrder },
+            fb_pixel_id: fbPixel.trim() || null,
+            tiktok_pixel_id: tiktokPixel.trim() || null,
+            low_stock_threshold: Math.max(0, Number(lowStock) || 0),
+            policies: {
+              refund_ar: refund,
+              shipping_ar: shipping,
+              privacy_ar: privacy,
+            },
           },
         },
       }),
     onSuccess: () => {
+      setPixelErr(null);
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
       void qc.invalidateQueries({ queryKey: ["me"] });
+    },
+    onError: (err) => {
+      // Server re-validates pixel id shapes; surface that specific case.
+      setPixelErr(
+        err instanceof ApiError && err.code === "VALIDATION_ERROR"
+          ? "تأكد من صيغة أرقام البيكسل: Facebook أرقام فقط، وTikTok حروف كبيرة وأرقام."
+          : "حصلت مشكلة في الحفظ — جرّب تاني.",
+      );
     },
   });
 
@@ -137,6 +171,47 @@ export default function Settings() {
               <p className="mt-1 pr-6 text-sm text-stone-500">{p.desc}</p>
             </label>
           ))}
+        </div>
+      </section>
+
+      <section className="space-y-3 rounded-xl border border-stone-200 bg-white p-5">
+        <h2 className="font-bold">التسويق والمخزون 📣</h2>
+        <div>
+          <label className="mb-1 block text-sm font-medium">Facebook Pixel ID (اختياري)</label>
+          <input value={fbPixel} onChange={(e) => setFbPixel(e.target.value)} dir="ltr" inputMode="numeric" placeholder="123456789012345"
+            className="w-64 rounded-lg border border-stone-300 p-3 text-left focus:border-amber-500 focus:outline-none" />
+        </div>
+        <div>
+          <label className="mb-1 block text-sm font-medium">TikTok Pixel ID (اختياري)</label>
+          <input value={tiktokPixel} onChange={(e) => setTiktokPixel(e.target.value)} dir="ltr" placeholder="ABCDEF1234567890"
+            className="w-64 rounded-lg border border-stone-300 p-3 text-left focus:border-amber-500 focus:outline-none" />
+        </div>
+        <div>
+          <label className="mb-1 block text-sm font-medium">حد التنبيه على قرب نفاد المخزون</label>
+          <input value={lowStock} onChange={(e) => setLowStock(e.target.value)} dir="ltr" inputMode="numeric"
+            className="w-24 rounded-lg border border-stone-300 p-3 text-left focus:border-amber-500 focus:outline-none" />
+          <p className="mt-1 text-xs text-stone-400">يظهر «باقي X» في المتجر لما الكمية تقل عن الرقم ده.</p>
+        </div>
+        {pixelErr && <p className="text-sm text-red-600">{pixelErr}</p>}
+      </section>
+
+      <section className="space-y-3 rounded-xl border border-stone-200 bg-white p-5">
+        <h2 className="font-bold">صفحات السياسات 📄</h2>
+        <p className="text-xs text-stone-500">سيبها فاضية عشان تستخدم النص الافتراضي الجاهز.</p>
+        <div>
+          <label className="mb-1 block text-sm font-medium">سياسة الاسترجاع</label>
+          <textarea value={refund} onChange={(e) => setRefund(e.target.value)} rows={3} placeholder="النص الافتراضي مستخدم لو سيبتها فاضية"
+            className="w-full rounded-lg border border-stone-300 p-3 text-sm focus:border-amber-500 focus:outline-none" />
+        </div>
+        <div>
+          <label className="mb-1 block text-sm font-medium">سياسة الشحن</label>
+          <textarea value={shipping} onChange={(e) => setShipping(e.target.value)} rows={3}
+            className="w-full rounded-lg border border-stone-300 p-3 text-sm focus:border-amber-500 focus:outline-none" />
+        </div>
+        <div>
+          <label className="mb-1 block text-sm font-medium">سياسة الخصوصية</label>
+          <textarea value={privacy} onChange={(e) => setPrivacy(e.target.value)} rows={3}
+            className="w-full rounded-lg border border-stone-300 p-3 text-sm focus:border-amber-500 focus:outline-none" />
         </div>
       </section>
 

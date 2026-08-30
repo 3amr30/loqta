@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { injectStorefrontMeta, type ListingMeta, type StoreMeta } from "./inject";
+import { injectPixels, injectStorefrontMeta, type ListingMeta, type StoreMeta } from "./inject";
 
 const HTML = `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"/><title>لقطة</title></head><body><div id="root"></div></body></html>`;
 
@@ -57,5 +57,57 @@ describe("injectStorefrontMeta", () => {
   it("marks out-of-stock products correctly in JSON-LD", () => {
     const out = injectStorefrontMeta(HTML, store, { ...listing, available: false });
     expect(out).toContain("OutOfStock");
+  });
+
+  it("adds aggregateRating to JSON-LD only when approved reviews exist", () => {
+    const withRating = injectStorefrontMeta(HTML, store, {
+      ...listing,
+      rating: { value: 4.5, count: 12 },
+    });
+    const m = /<script type="application\/ld\+json">(.*?)<\/script>/.exec(withRating)!;
+    const ld = JSON.parse(m[1]!.split("<\\/").join("</"));
+    expect(ld.aggregateRating).toEqual({
+      "@type": "AggregateRating",
+      ratingValue: 4.5,
+      reviewCount: 12,
+    });
+    // count 0 => no aggregateRating
+    const noRating = injectStorefrontMeta(HTML, store, {
+      ...listing,
+      rating: { value: 0, count: 0 },
+    });
+    expect(noRating).not.toContain("aggregateRating");
+  });
+});
+
+describe("injectPixels", () => {
+  const HTML = `<!doctype html><html><head><title>x</title></head><body></body></html>`;
+
+  it("injects both FB + TikTok base code with the configured ids", () => {
+    const out = injectPixels(HTML, { fbPixelId: "123456789012345", tiktokPixelId: "ABCDEF1234567890" });
+    expect(out).toContain("fbq('init','123456789012345')");
+    expect(out).toContain("fbq('track','PageView')");
+    expect(out).toContain("ttq.load('ABCDEF1234567890')");
+    expect(out).toContain("</head>");
+  });
+
+  it("injects only the pixel that is present", () => {
+    const out = injectPixels(HTML, { fbPixelId: "123456789012345", tiktokPixelId: null });
+    expect(out).toContain("fbq('init'");
+    expect(out).not.toContain("ttq.load");
+  });
+
+  it("returns the html untouched when no valid pixel is present", () => {
+    expect(injectPixels(HTML, {})).toBe(HTML);
+    expect(injectPixels(HTML, { fbPixelId: null, tiktokPixelId: null })).toBe(HTML);
+  });
+
+  it("drops ids that fail the strict shape (no markup smuggling)", () => {
+    const out = injectPixels(HTML, {
+      fbPixelId: "12345\"/><script>alert(1)</script>",
+      tiktokPixelId: "abc",
+    });
+    expect(out).toBe(HTML);
+    expect(out).not.toContain("alert(1)");
   });
 });

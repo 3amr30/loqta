@@ -31,6 +31,11 @@ export async function endPool() {
   _pool = null;
 }
 
+/** Escape \, % and _ so user text can sit inside a LIKE/ILIKE pattern param. */
+export function escapeLike(s: string): string {
+  return s.replace(/[\\%_]/g, (m) => `\\${m}`);
+}
+
 export async function query<T extends QueryResultRow = QueryResultRow>(
   text: string,
   params: unknown[] = [],

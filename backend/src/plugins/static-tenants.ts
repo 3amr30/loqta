@@ -3,7 +3,7 @@ import { extname, join, normalize } from "node:path";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Config } from "../config";
 import { queryOne } from "../lib/db";
-import { injectStorefrontMeta, type ListingMeta, type StoreMeta } from "../seo/inject";
+import { injectPixels, injectStorefrontMeta, type ListingMeta, type StoreMeta } from "../seo/inject";
 
 /**
  * Multi-tenant SPA serving:
@@ -88,8 +88,14 @@ export function registerStaticTenants(app: FastifyInstance, config: Config, dist
     const hit = htmlCache.get(key);
     if (hit && hit.exp > Date.now()) return hit.html;
 
-    const store = await queryOne<StoreMeta & { id: string }>(
-      `select id, name, slug, logo_url, currency from storefront_stores where slug = $1`,
+    const store = await queryOne<
+      StoreMeta & { id: string; fb_pixel_id: string | null; tiktok_pixel_id: string | null }
+    >(
+      `select s.id, s.name, s.slug, s.logo_url, s.currency,
+              s.settings -> 'policies' as policies,
+              s.settings ->> 'fb_pixel_id' as fb_pixel_id,
+              s.settings ->> 'tiktok_pixel_id' as tiktok_pixel_id
+       from stores s where s.slug = $1`,
       [slug],
     );
     if (!store) return null;
@@ -98,6 +104,7 @@ export function registerStaticTenants(app: FastifyInstance, config: Config, dist
     const m = /^\/p\/([^/]+)$/.exec(urlPath);
     if (m) {
       const row = await queryOne<{
+        id: string;
         title_ar: string;
         description_ar: string | null;
         images: string[];
@@ -105,12 +112,19 @@ export function registerStaticTenants(app: FastifyInstance, config: Config, dist
         currency: string;
         stock_status: string;
       }>(
-        `select title_ar, description_ar, images, retail_price::float8 as retail_price,
+        `select id, title_ar, description_ar, images, retail_price::float8 as retail_price,
                 currency, stock_status
          from storefront_listings where store_id = $1 and slug = $2`,
         [store.id, decodeURIComponent(m[1]!)],
       );
       if (row) {
+        // aggregateRating in the JSON-LD when approved reviews exist (rich unfurls).
+        const agg = await queryOne<{ avg: number | null; count: string }>(
+          `select avg(rating)::float8 as avg, count(*) as count
+           from product_reviews where listing_id = $1 and status = 'approved'`,
+          [row.id],
+        );
+        const count = Number(agg?.count ?? 0);
         listing = {
           title: row.title_ar,
           description: row.description_ar,
@@ -119,11 +133,17 @@ export function registerStaticTenants(app: FastifyInstance, config: Config, dist
           currency: row.currency,
           available: row.stock_status === "active",
           url: `https://${slug}.${config.ROOT_DOMAIN}${urlPath}`,
+          rating: count > 0 && agg?.avg != null ? { value: agg.avg, count } : null,
         };
       }
     }
 
-    const html = injectStorefrontMeta(storefrontHtml, store, listing);
+    let html = injectStorefrontMeta(storefrontHtml, store, listing);
+    // Ad pixels (re-validated inside injectPixels — never trust raw settings).
+    html = injectPixels(html, {
+      fbPixelId: store.fb_pixel_id,
+      tiktokPixelId: store.tiktok_pixel_id,
+    });
     htmlCache.set(key, { html, exp: Date.now() + 60_000 });
     if (htmlCache.size > 200) {
       const first = htmlCache.keys().next().value;

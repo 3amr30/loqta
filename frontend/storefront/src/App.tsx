@@ -6,6 +6,7 @@ import Product from "./pages/Product";
 import Cart from "./pages/Cart";
 import Checkout from "./pages/Checkout";
 import Success from "./pages/Success";
+import Policy from "./pages/Policy";
 
 function Shell() {
   const { store, loading, error } = useStore();
@@ -39,8 +40,16 @@ function Shell() {
         <Route path="/cart" element={<Cart />} />
         <Route path="/checkout" element={<Checkout />} />
         <Route path="/success/:orderNumber" element={<Success />} />
+        <Route path="/pages/:type" element={<Policy />} />
         <Route path="*" element={<Home />} />
       </Routes>
+      <footer className="mt-10 border-t border-stone-200 pt-4 text-center text-xs text-stone-400">
+        <nav className="flex justify-center gap-4">
+          <Link to="/pages/shipping">الشحن</Link>
+          <Link to="/pages/refund">الاسترجاع</Link>
+          <Link to="/pages/privacy">الخصوصية</Link>
+        </nav>
+      </footer>
     </div>
   );
 }
