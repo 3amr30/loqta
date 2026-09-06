@@ -4,6 +4,7 @@ import { query, queryOne } from "../../lib/db";
 import { AppError } from "../../lib/errors";
 import { ordersToCsv, type OrderCsvRow } from "../../services/orders-csv";
 import { canTransition, nextStatuses, type OrderStatus } from "../../services/order-status";
+import { getCustomerHistory, trustSummaryAr } from "../../services/trust";
 
 const STATUS = z.enum([
   "pending", "confirmed", "fulfilled", "shipped", "delivered", "cancelled", "returned",
@@ -32,7 +33,8 @@ const ORDER_COLS = `
   o.subtotal::float8 as subtotal, o.shipping_fee::float8 as shipping_fee,
   o.total::float8 as total, o.total_cost::float8 as total_cost,
   (o.total - o.total_cost)::float8 as profit,
-  o.notes, o.tracking_number, o.created_at, o.updated_at`;
+  o.notes, o.tracking_number, o.whatsapp_confirmation_status, o.whatsapp_confirmed_at,
+  o.created_at, o.updated_at`;
 
 function buildFilters(storeId: string, q: z.infer<typeof ListQuery>) {
   const where = [`o.store_id = $1`];
@@ -104,7 +106,7 @@ export function ordersRoutes(app: FastifyInstance) {
 
   app.get("/v1/orders/:id", { preHandler: (req) => app.requireStore(req) }, async (req) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
-    const order = await queryOne<{ status: OrderStatus }>(
+    const order = await queryOne<{ status: OrderStatus; customer_phone: string }>(
       `select ${ORDER_COLS} from orders o where o.id = $1 and o.store_id = $2`,
       [id, req.store!.id],
     );
@@ -120,7 +122,17 @@ export function ordersRoutes(app: FastifyInstance) {
        where oi.order_id = $1`,
       [id],
     );
-    return { order, items, nextStatuses: nextStatuses(order.status) };
+
+    // P8 trust signal: this phone's per-store history (this order excluded is
+    // fine — the view counts all; the merchant reads it as "with you before").
+    const history = await getCustomerHistory(req.store!.id, order.customer_phone);
+    return {
+      order,
+      items,
+      nextStatuses: nextStatuses(order.status),
+      customerHistory: history,
+      trustNote: trustSummaryAr(history),
+    };
   });
 
   app.patch("/v1/orders/:id", { preHandler: (req) => app.requireStore(req) }, async (req) => {

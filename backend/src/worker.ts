@@ -3,12 +3,13 @@ import PgBoss from "pg-boss";
 import { initSentry, runJob } from "./lib/sentry";
 import { endPool } from "./lib/db";
 import { closeBrowser } from "./worker/lib/browser";
-import { Q, type GenerateContentPayload, type ImportProductPayload, type NotifyDispatchPayload, type ProcessImagePayload, type SyncProductPayload } from "./worker/queues";
+import { Q, type GenerateContentPayload, type ImportProductPayload, type NotifyDispatchPayload, type ProcessImagePayload, type SyncProductPayload, type WhatsappConfirmPayload } from "./worker/queues";
 import { handleImportProduct, sweepImportJobs } from "./worker/jobs/import-product";
 import { handleSyncProduct, handleSyncTick } from "./worker/jobs/sync";
 import { handleGenerateContent } from "./worker/jobs/generate-content";
 import { handleProcessImage } from "./worker/jobs/process-image";
 import { handleNotifyDispatch } from "./worker/jobs/dispatch-notification";
+import { handleConfirmTimeout, handleWhatsappConfirm } from "./worker/jobs/order-confirm";
 
 /**
  * Loqta worker — the only component that scrapes, syncs, and writes to the
@@ -71,8 +72,20 @@ async function main() {
       );
   });
 
+  await boss.work<WhatsappConfirmPayload>(Q.whatsappConfirm, { batchSize: 3 }, async (jobs) => {
+    for (const job of jobs)
+      await runJob(Q.whatsappConfirm, job.id, { orderId: job.data.orderId }, () =>
+        handleWhatsappConfirm(job.data),
+      );
+  });
+
+  await boss.work(Q.confirmTimeout, async (jobs) => {
+    await runJob(Q.confirmTimeout, jobs[0]?.id ?? "tick", {}, () => handleConfirmTimeout());
+  });
+
   // ---- schedules -----------------------------------------------------
   await boss.schedule(Q.syncTick, "*/15 * * * *"); // tiered fan-out every 15 min
+  await boss.schedule(Q.confirmTimeout, "0 * * * *"); // hourly no-response sweep
 
   // ---- import intake sweep (web -> worker boundary) -------------------
   const sweepMs = Number(process.env.IMPORT_SWEEP_MS ?? 5000);

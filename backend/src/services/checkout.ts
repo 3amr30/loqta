@@ -231,8 +231,14 @@ export async function executeCheckout(
   discount_amount: number;
   currency: string;
 }> {
-  const store = await query<{ id: string; currency: string; shipping_fee: string }>(
-    `select id, currency, coalesce((settings ->> 'shipping_fee')::numeric, 0) as shipping_fee
+  const store = await query<{
+    id: string;
+    currency: string;
+    shipping_fee: string;
+    settings: Record<string, unknown> | null;
+  }>(
+    `select id, currency, settings,
+            coalesce((settings ->> 'shipping_fee')::numeric, 0) as shipping_fee
      from stores where slug = $1`,
     [storeSlug],
   ).then((r) => r[0]);
@@ -285,6 +291,7 @@ export async function executeCheckout(
 
   const client = await getPool().connect();
   let orderNumber: string;
+  let orderId: string;
   try {
     await client.query("begin");
 
@@ -353,6 +360,7 @@ export async function executeCheckout(
     }
     await client.query("commit");
     orderNumber = order.order_number;
+    orderId = order.id;
   } catch (err) {
     await client.query("rollback").catch(() => {});
     throw err;
@@ -367,6 +375,18 @@ export async function executeCheckout(
     `${orderNumber} — ${result.total} ${store.currency} (${input.customer.governorate})`,
     { orderNumber },
   );
+
+  // P8: kick off the WhatsApp order-confirmation round-trip when the store
+  // enabled it. Best-effort — a queue hiccup must never fail a placed order.
+  if ((store.settings as { confirmation_enabled?: boolean } | null)?.confirmation_enabled) {
+    try {
+      const { getBoss } = await import("../lib/queue");
+      const { Q } = await import("../worker/queues");
+      await (await getBoss()).send(Q.whatsappConfirm, { orderId });
+    } catch (err) {
+      console.warn("[checkout] confirm enqueue failed:", err);
+    }
+  }
   return {
     orderNumber,
     total: result.total,

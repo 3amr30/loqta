@@ -46,6 +46,11 @@ export const UpdateStoreSchema = z
           .nullable()
           .optional(),
         low_stock_threshold: z.number().int().min(0).max(10000).optional(),
+        // P8 RTO toggles
+        confirmation_enabled: z.boolean().optional(),
+        confirmation_timeout_hours: z.number().int().min(1).max(72).optional(),
+        otp_enabled: z.boolean().optional(),
+        block_after_cancellations: z.number().int().min(0).max(1000).nullable().optional(),
         policies: z
           .object({
             refund_ar: z.string().max(20000).optional(),

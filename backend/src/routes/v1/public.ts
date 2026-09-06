@@ -5,6 +5,10 @@ import { AppError } from "../../lib/errors";
 import { CheckoutSchema, executeCheckout } from "../../services/checkout";
 import { checkReviewEligibility, ReviewSubmitSchema, type EligibilityRow } from "../../services/reviews";
 import { getPolicyPage, POLICY_TYPES, type PolicyType } from "../../services/policies";
+import { evaluateCheckoutGate } from "../../services/checkout-gate";
+import { getCustomerHistory } from "../../services/trust";
+import { signOtpToken, verifyOtpToken } from "../../services/otp-token";
+import { checkVerification, isOtpConfigured, startVerification } from "../../services/otp";
 
 /**
  * Public storefront API. INVARIANT: reads go through the storefront_*
@@ -215,12 +219,84 @@ export function publicRoutes(app: FastifyInstance) {
     },
   );
 
+  // ---- OTP (Twilio Verify, WhatsApp channel) ----
+  const PhoneSchema = z.strictObject({
+    phone: z.string().regex(/^01[0-9]{9}$/, "رقم موبايل مصري: 01xxxxxxxxx"),
+  });
+  const OtpCheckSchema = PhoneSchema.extend({ code: z.string().trim().min(3).max(10) });
+
+  app.post(
+    "/v1/public/stores/:slug/otp/send",
+    { config: { rateLimit: { max: 5, timeWindow: "1 hour" } } },
+    async (req, reply) => {
+      SlugParams.parse(req.params);
+      const { phone } = PhoneSchema.parse(req.body);
+      if (!isOtpConfigured()) {
+        return reply
+          .status(503)
+          .send({ error: { code: "OTP_UNAVAILABLE", message: "التحقق غير متاح حاليًا" } });
+      }
+      await startVerification(phone); // never logs / returns the code
+      return { sent: true };
+    },
+  );
+
+  app.post(
+    "/v1/public/stores/:slug/otp/check",
+    { config: { rateLimit: { max: 10, timeWindow: "1 hour" } } },
+    async (req, reply) => {
+      const { slug } = SlugParams.parse(req.params);
+      const { phone, code } = OtpCheckSchema.parse(req.body);
+      const secret = process.env.OTP_TOKEN_SECRET;
+      if (!isOtpConfigured() || !secret) {
+        return reply
+          .status(503)
+          .send({ error: { code: "OTP_UNAVAILABLE", message: "التحقق غير متاح حاليًا" } });
+      }
+      const store = await storeBySlug(slug);
+      const ok = await checkVerification(phone, code);
+      if (!ok) throw new AppError("INVALID_CODE", 422, "الكود غير صحيح أو انتهت صلاحيته.");
+      const otpToken = signOtpToken(secret, store.id, phone);
+      return { otpToken };
+    },
+  );
+
   app.post(
     "/v1/public/stores/:slug/checkout",
     { config: { rateLimit: CHECKOUT_LIMIT } },
     async (req, reply) => {
       const { slug } = SlugParams.parse(req.params);
       const input = CheckoutSchema.parse(req.body);
+
+      // P8 gate: block over the cancellation threshold; require OTP for
+      // unproven phones when the store enabled it. Store settings + history
+      // are per (store, phone) — service pool, tenant-scoped by slug.
+      const store = await queryOne<{ id: string; settings: Record<string, unknown> | null }>(
+        `select id, settings from stores where slug = $1`,
+        [slug],
+      );
+      if (!store) throw new AppError("STORE_NOT_FOUND", 404, "Store not found");
+      const settings = store.settings ?? {};
+      const secret = process.env.OTP_TOKEN_SECRET;
+      const hasValidOtpToken = Boolean(
+        input.otpToken &&
+          secret &&
+          verifyOtpToken(secret, input.otpToken, store.id, input.customer.phone),
+      );
+      const history = await getCustomerHistory(store.id, input.customer.phone);
+      const gate = evaluateCheckoutGate({
+        otpEnabled: Boolean((settings as { otp_enabled?: boolean }).otp_enabled),
+        blockThreshold: (settings as { block_after_cancellations?: number }).block_after_cancellations ?? null,
+        history,
+        hasValidOtpToken,
+      });
+      if (gate.action === "blocked") {
+        throw new AppError("ORDER_BLOCKED", 422, "معلش، مش قادرين نكمل الطلب ده. تواصل مع المتجر.");
+      }
+      if (gate.action === "otp_required") {
+        return reply.status(202).send({ otpRequired: true });
+      }
+
       const result = await executeCheckout(slug, input);
       return reply.status(201).send(result);
     },
