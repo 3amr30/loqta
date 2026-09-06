@@ -177,3 +177,116 @@ describe("computeOrder (server-side recomputation)", () => {
     expect(r).toMatchObject({ ok: false, code: "LISTING_UNAVAILABLE" });
   });
 });
+
+describe("computeOrder P9 — discounts + per-governorate shipping", () => {
+  const withCode = (code: string, items: CheckoutInput["items"]): CheckoutInput => ({
+    ...input(items),
+    discount_code: code,
+  });
+  const discount = (over: Partial<import("./discount").DiscountRow> = {}) => ({
+    code: "SAVE10",
+    type: "percent" as const,
+    value: 10,
+    min_subtotal: null,
+    max_uses: null,
+    used_count: 0,
+    expires_at: null,
+    active: true,
+    ...over,
+  });
+
+  it("applies a percent discount: total = subtotal − discount + shipping", () => {
+    const r = computeOrder(withCode("SAVE10", [{ listingId: LID, qty: 2 }]), {
+      listings: [listing()],
+      variants: [],
+      store,
+      discount: discount(),
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.subtotal).toBe(798);
+    expect(r.discount_amount).toBe(79.8);
+    expect(r.discount_code).toBe("SAVE10");
+    expect(r.total).toBe(798 - 79.8 + 45); // 763.2
+  });
+
+  it("applies a fixed discount and never goes below the shipping fee", () => {
+    const r = computeOrder(withCode("BIG", [{ listingId: LID, qty: 1 }]), {
+      listings: [listing()],
+      variants: [],
+      store,
+      discount: discount({ type: "fixed", value: 5000 }),
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.discount_amount).toBe(399); // capped at subtotal
+    expect(r.total).toBe(45); // just the shipping fee
+  });
+
+  it("rejects a supplied code that does not exist (never silently ignored)", () => {
+    const r = computeOrder(withCode("GHOST", [{ listingId: LID, qty: 1 }]), {
+      listings: [listing()],
+      variants: [],
+      store,
+      discount: null,
+    });
+    expect(r).toMatchObject({ ok: false, code: "DISCOUNT_INVALID" });
+  });
+
+  it("propagates discount validity failures (expired / min-subtotal)", () => {
+    const expired = computeOrder(withCode("OLD", [{ listingId: LID, qty: 1 }]), {
+      listings: [listing()],
+      variants: [],
+      store,
+      discount: discount({ expires_at: "2000-01-01T00:00:00Z" }),
+    });
+    expect(expired).toMatchObject({ ok: false, code: "DISCOUNT_EXPIRED" });
+
+    const min = computeOrder(withCode("MIN", [{ listingId: LID, qty: 1 }]), {
+      listings: [listing()],
+      variants: [],
+      store,
+      discount: discount({ min_subtotal: 1000 }),
+    });
+    expect(min).toMatchObject({ ok: false, code: "DISCOUNT_MIN_SUBTOTAL" });
+  });
+
+  it("no code => no discount, unchanged legacy total", () => {
+    const r = computeOrder(input([{ listingId: LID, qty: 1 }]), {
+      listings: [listing()],
+      variants: [],
+      store,
+      discount: discount(), // present but not requested via a code
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.discount_amount).toBe(0);
+    expect(r.discount_code).toBeNull();
+    expect(r.total).toBe(399 + 45);
+  });
+
+  it("uses the resolved per-governorate shipping fee passed by the caller", () => {
+    const r = computeOrder(input([{ listingId: LID, qty: 1 }]), {
+      listings: [listing()],
+      variants: [],
+      store: { ...store, shipping_fee: 90 }, // e.g. أسوان
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.shipping_fee).toBe(90);
+    expect(r.total).toBe(399 + 90);
+  });
+
+  it("still rejects any client-sent discount_amount (strict schema)", () => {
+    const body = {
+      ...input([{ listingId: LID, qty: 1 }]),
+      discount_amount: 500,
+    };
+    expect(() => CheckoutSchema.parse(body)).toThrow();
+  });
+
+  it("accepts a discount_code on the wire (a code, never an amount)", () => {
+    const parsed = CheckoutSchema.parse(withCode("SAVE10", [{ listingId: LID, qty: 1 }]));
+    expect(parsed.discount_code).toBe("SAVE10");
+  });
+});

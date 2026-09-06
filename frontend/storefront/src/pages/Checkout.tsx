@@ -23,6 +23,7 @@ export default function Checkout() {
   const { store } = useStore();
   const navigate = useNavigate();
   const [serverError, setServerError] = useState<string | null>(null);
+  const [code, setCode] = useState("");
   const { register, handleSubmit, formState } = useForm<Form>({ resolver: zodResolver(Schema) });
 
   // InitiateCheckout fires once when a non-empty cart reaches this page.
@@ -50,7 +51,7 @@ export default function Checkout() {
   const onSubmit = handleSubmit(async (customer) => {
     setServerError(null);
     try {
-      const res = await api<{ orderNumber: string }>(
+      const res = await api<{ orderNumber: string; total: number }>(
         `/v1/public/stores/${store.slug}/checkout`,
         {
           method: "POST",
@@ -62,16 +63,19 @@ export default function Checkout() {
               ...(i.variantId ? { variantId: i.variantId } : {}),
               qty: i.qty,
             })),
+            ...(code.trim() ? { discount_code: code.trim() } : {}),
           }),
         },
       );
       clearCart();
-      navigate(`/success/${res.orderNumber}`, { state: { total } });
+      navigate(`/success/${res.orderNumber}`, { state: { total: res.total } });
     } catch (err) {
       if (err instanceof ApiError && err.code === "OUT_OF_STOCK") {
         setServerError("للأسف في منتج خلص من المخزون — راجع السلة.");
       } else if (err instanceof ApiError && err.code === "LISTING_UNAVAILABLE") {
         setServerError("في منتج لم يعد متاحًا — راجع السلة.");
+      } else if (err instanceof ApiError && err.code?.startsWith("DISCOUNT_")) {
+        setServerError(err.message || "كود الخصم غير صالح.");
       } else if (err instanceof ApiError && err.status === 429) {
         setServerError("محاولات كتير — استنى دقيقة وجرّب تاني.");
       } else {
@@ -110,8 +114,29 @@ export default function Checkout() {
         </div>
         <textarea {...register("notes")} placeholder="ملاحظات (اختياري)" rows={2} className={input} />
 
-        <div className="rounded-xl bg-white p-4 text-sm border border-stone-200">
-          <div className="flex justify-between font-bold">
+        <input
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          placeholder="كود خصم (اختياري)"
+          dir="ltr"
+          className={`${input} text-left`}
+        />
+
+        <div className="rounded-xl bg-white p-4 text-sm border border-stone-200 space-y-1">
+          <div className="flex justify-between text-stone-500">
+            <span>المنتجات</span>
+            <span>{subtotal} {store.currency}</span>
+          </div>
+          <div className="flex justify-between text-stone-500">
+            <span>الشحن</span>
+            <span>{store.shipping_fee} {store.currency}</span>
+          </div>
+          {code.trim() && (
+            <p className="text-xs text-stone-400">
+              الخصم بيتطبق ويتأكد بعد الضغط على تأكيد الطلب.
+            </p>
+          )}
+          <div className="flex justify-between border-t border-stone-100 pt-1 font-bold">
             <span>الإجمالي (دفع عند الاستلام)</span>
             <span>{total} {store.currency}</span>
           </div>

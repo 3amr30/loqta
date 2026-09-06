@@ -2,11 +2,15 @@ import { z } from "zod";
 import { EGYPT_GOVERNORATES } from "@loqta/core";
 import { getPool, notify, query } from "../lib/db";
 import { AppError } from "../lib/errors";
+import { computeDiscount, orderTotal, type DiscountRow } from "./discount";
+import { resolveShippingFee, type ShippingRate } from "./shipping";
 
 /**
  * COD checkout. THE invariant lives here: every price is recomputed from
  * DB rows; the request schema cannot even carry a price (strictObject).
- * Client-side prices are display-only.
+ * Client-side prices are display-only. P9: the client may send a discount
+ * CODE (never an amount) and the shipping fee is resolved per governorate —
+ * both stay server-side and tamper-proof.
  */
 
 export const CheckoutSchema = z.strictObject({
@@ -27,6 +31,8 @@ export const CheckoutSchema = z.strictObject({
     )
     .min(1)
     .max(20),
+  discount_code: z.string().trim().min(1).max(40).optional(),
+  otpToken: z.string().max(400).optional(), // P8: consumed by the route, not here
 });
 
 export type CheckoutInput = z.infer<typeof CheckoutSchema>;
@@ -57,7 +63,7 @@ export interface VariantRow {
 export interface StoreCtx {
   id: string;
   currency: string;
-  shipping_fee: number;
+  shipping_fee: number; // already resolved for the customer's governorate
 }
 
 export interface PricedItem {
@@ -78,18 +84,41 @@ export type ComputeResult =
       ok: true;
       items: PricedItem[];
       subtotal: number;
+      discount_code: string | null;
+      discount_amount: number;
       shipping_fee: number;
       total: number;
       total_cost: number;
     }
-  | { ok: false; code: "LISTING_UNAVAILABLE" | "OUT_OF_STOCK"; message: string };
+  | {
+      ok: false;
+      code:
+        | "LISTING_UNAVAILABLE"
+        | "OUT_OF_STOCK"
+        | "DISCOUNT_INVALID"
+        | "DISCOUNT_INACTIVE"
+        | "DISCOUNT_EXPIRED"
+        | "DISCOUNT_EXHAUSTED"
+        | "DISCOUNT_MIN_SUBTOTAL";
+      message: string;
+    };
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-/** Pure: request items + DB rows -> priced order or typed rejection. */
+/**
+ * Pure: request items + DB rows -> priced order or typed rejection.
+ * `ctx.store.shipping_fee` is the already-resolved per-governorate fee.
+ * `ctx.discount` is the DB row for `input.discount_code` (or null when the
+ * code doesn't exist) — the amount is computed here, never taken from the client.
+ */
 export function computeOrder(
   input: CheckoutInput,
-  ctx: { listings: ListingRow[]; variants: VariantRow[]; store: StoreCtx },
+  ctx: {
+    listings: ListingRow[];
+    variants: VariantRow[];
+    store: StoreCtx;
+    discount?: DiscountRow | null;
+  },
 ): ComputeResult {
   const listingById = new Map(ctx.listings.map((l) => [l.id, l]));
   const variantById = new Map(ctx.variants.map((v) => [v.id, v]));
@@ -135,17 +164,73 @@ export function computeOrder(
   }
 
   const subtotal = round2(items.reduce((s, i) => s + i.unit_price * i.qty, 0));
+
+  // Discount: only when a code was supplied. A supplied-but-unknown code is a
+  // hard error (never silently ignored), matching the price-tamper stance.
+  let discount_amount = 0;
+  let discount_code: string | null = null;
+  if (input.discount_code) {
+    if (!ctx.discount) {
+      return { ok: false, code: "DISCOUNT_INVALID", message: "كود الخصم غير صحيح." };
+    }
+    const d = computeDiscount(ctx.discount, subtotal);
+    if (!d.ok) return { ok: false, code: d.code, message: d.message };
+    discount_amount = d.amount;
+    discount_code = ctx.discount.code;
+  }
+
   const shipping_fee = round2(ctx.store.shipping_fee);
-  const total = round2(subtotal + shipping_fee);
+  const total = orderTotal(subtotal, discount_amount, shipping_fee);
   const total_cost = round2(items.reduce((s, i) => s + i.unit_cost_snapshot * i.qty, 0));
-  return { ok: true, items, subtotal, shipping_fee, total, total_cost };
+  return { ok: true, items, subtotal, discount_code, discount_amount, shipping_fee, total, total_cost };
+}
+
+/** shipping_rates lookup with graceful fallback if the table isn't there yet (pre-010). */
+async function resolveShipping(
+  storeId: string,
+  governorate: string,
+  defaultFee: number,
+): Promise<number> {
+  try {
+    const rates = await query<ShippingRate>(
+      `select governorate, fee::float8 as fee, delivery_days
+       from shipping_rates where store_id = $1`,
+      [storeId],
+    );
+    return resolveShippingFee(governorate, rates, defaultFee);
+  } catch (err) {
+    if ((err as { code?: string }).code === "42P01") return defaultFee; // table not migrated yet
+    throw err;
+  }
+}
+
+/** discount_codes lookup with the same graceful fallback. */
+async function findDiscount(storeId: string, code: string): Promise<DiscountRow | null> {
+  try {
+    return await query<DiscountRow>(
+      `select code, type, value::float8 as value,
+              min_subtotal::float8 as min_subtotal, max_uses, used_count,
+              expires_at, active
+       from discount_codes where store_id = $1 and lower(code) = lower($2)`,
+      [storeId, code],
+    ).then((r) => r[0] ?? null);
+  } catch (err) {
+    if ((err as { code?: string }).code === "42P01") return null;
+    throw err;
+  }
 }
 
 /** Load rows, compute, insert order + items in one transaction, notify. */
 export async function executeCheckout(
   storeSlug: string,
   input: CheckoutInput,
-): Promise<{ orderNumber: string; total: number; shipping_fee: number; currency: string }> {
+): Promise<{
+  orderNumber: string;
+  total: number;
+  shipping_fee: number;
+  discount_amount: number;
+  currency: string;
+}> {
   const store = await query<{ id: string; currency: string; shipping_fee: string }>(
     `select id, currency, coalesce((settings ->> 'shipping_fee')::numeric, 0) as shipping_fee
      from stores where slug = $1`,
@@ -181,10 +266,20 @@ export async function executeCheckout(
       )
     : [];
 
+  const shippingFee = await resolveShipping(
+    store.id,
+    input.customer.governorate,
+    Number(store.shipping_fee),
+  );
+  const discount = input.discount_code
+    ? await findDiscount(store.id, input.discount_code)
+    : null;
+
   const result = computeOrder(input, {
     listings,
     variants,
-    store: { id: store.id, currency: store.currency, shipping_fee: Number(store.shipping_fee) },
+    store: { id: store.id, currency: store.currency, shipping_fee: shippingFee },
+    discount,
   });
   if (!result.ok) throw new AppError(result.code, 422, result.message);
 
@@ -192,11 +287,27 @@ export async function executeCheckout(
   let orderNumber: string;
   try {
     await client.query("begin");
+
+    // Race-safe single-use enforcement: claim one use before the order lands.
+    if (result.discount_code && discount) {
+      const claimed = await client.query<{ id: string }>(
+        `update discount_codes set used_count = used_count + 1
+         where store_id = $1 and lower(code) = lower($2)
+           and (max_uses is null or used_count < max_uses)
+         returning id`,
+        [store.id, result.discount_code],
+      );
+      if (claimed.rowCount === 0) {
+        await client.query("rollback").catch(() => {});
+        throw new AppError("DISCOUNT_EXHAUSTED", 422, "كود الخصم خلص عدد استخداماته.");
+      }
+    }
+
     const orderRes = await client.query<{ id: string; order_number: string }>(
       `insert into orders (store_id, customer_name, customer_phone, governorate,
-                           shipping_address, currency, subtotal, shipping_fee, total,
-                           total_cost, notes, order_number)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, '')
+                           shipping_address, currency, subtotal, discount_code,
+                           discount_amount, shipping_fee, total, total_cost, notes, order_number)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, '')
        returning id, order_number`,
       [
         store.id,
@@ -210,6 +321,8 @@ export async function executeCheckout(
         }),
         store.currency,
         result.subtotal,
+        result.discount_code,
+        result.discount_amount,
         result.shipping_fee,
         result.total,
         result.total_cost,
@@ -258,6 +371,7 @@ export async function executeCheckout(
     orderNumber,
     total: result.total,
     shipping_fee: result.shipping_fee,
+    discount_amount: result.discount_amount,
     currency: store.currency,
   };
 }
