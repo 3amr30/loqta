@@ -2,7 +2,11 @@
  * Per-store customer trust decisions (P8). Pure functions over the
  * customer_order_history aggregate (counts scoped to store_id + phone).
  * No cross-store data — the merchant already owns everything here.
+ * The single DB helper (getCustomerHistory) is kept separate from the pure
+ * fns below so the decisions stay testable offline.
  */
+
+import { query } from "../lib/db";
 
 export interface TrustHistory {
   total: number;
@@ -12,6 +16,28 @@ export interface TrustHistory {
 }
 
 export const EMPTY_HISTORY: TrustHistory = { total: 0, confirmed: 0, cancelled: 0, returned: 0 };
+
+/**
+ * Read one phone's per-store history from the customer_order_history view.
+ * Graceful before migration 009 (42P01 → empty). The ONLY impure function
+ * here; all decisions below take a TrustHistory and stay pure.
+ */
+export async function getCustomerHistory(
+  storeId: string,
+  phone: string,
+): Promise<TrustHistory> {
+  try {
+    const rows = await query<TrustHistory>(
+      `select total, confirmed, cancelled, returned
+       from customer_order_history where store_id = $1 and customer_phone = $2`,
+      [storeId, phone],
+    );
+    return rows[0] ?? EMPTY_HISTORY;
+  } catch (err) {
+    if ((err as { code?: string }).code === "42P01") return EMPTY_HISTORY;
+    throw err;
+  }
+}
 
 /**
  * Conditional OTP: skip it only for a phone that has genuinely bought before

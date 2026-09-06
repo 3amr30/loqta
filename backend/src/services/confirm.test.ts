@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseConfirmReply } from "./confirm";
+import { decideConfirmAction, parseConfirmReply } from "./confirm";
 
 describe("parseConfirmReply", () => {
   it("maps quick-reply button ids", () => {
@@ -40,5 +40,23 @@ describe("parseConfirmReply", () => {
   it("is robust to tatweel and diacritics", () => {
     expect(parseConfirmReply("نـعـم")).toBe("confirm");
     expect(parseConfirmReply("نَعَم")).toBe("confirm");
+  });
+});
+
+describe("decideConfirmAction (idempotent webhook)", () => {
+  it("acts only on an order still awaiting a reply", () => {
+    expect(decideConfirmAction("confirm", "sent")).toEqual({ kind: "confirm" });
+    expect(decideConfirmAction("decline", "sent")).toEqual({ kind: "decline" });
+  });
+
+  it("is a no-op once already decided (duplicate delivery)", () => {
+    for (const st of ["confirmed", "declined", "no_response", null]) {
+      expect(decideConfirmAction("confirm", st), String(st)).toEqual({ kind: "noop" });
+      expect(decideConfirmAction("decline", st), String(st)).toEqual({ kind: "noop" });
+    }
+  });
+
+  it("is a no-op for ambiguous replies even while awaiting", () => {
+    expect(decideConfirmAction("unknown", "sent")).toEqual({ kind: "noop" });
   });
 });

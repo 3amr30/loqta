@@ -54,3 +54,22 @@ export function parseConfirmReply(raw: string): ConfirmVerdict {
   if (hasDecline && !hasConfirm) return "decline";
   return "unknown";
 }
+
+export type ConfirmAction = { kind: "confirm" } | { kind: "decline" } | { kind: "noop" };
+
+/**
+ * Idempotent webhook decision. We only ever act on an order still AWAITING a
+ * reply (whatsapp_confirmation_status = 'sent'); anything else — already
+ * confirmed/declined/no_response, or an ambiguous reply — is a no-op. This is
+ * the first line against duplicate webhook delivery (the DB UPDATE guards on
+ * the same 'sent' status as the second line).
+ */
+export function decideConfirmAction(
+  verdict: ConfirmVerdict,
+  confirmationStatus: string | null,
+): ConfirmAction {
+  if (confirmationStatus !== "sent") return { kind: "noop" };
+  if (verdict === "confirm") return { kind: "confirm" };
+  if (verdict === "decline") return { kind: "decline" };
+  return { kind: "noop" };
+}
