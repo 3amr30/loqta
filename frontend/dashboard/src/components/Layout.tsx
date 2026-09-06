@@ -9,6 +9,8 @@ const NAV = [
   { to: "/pricing", label: "التسعير" },
   { to: "/approvals", label: "الموافقات" },
   { to: "/reviews", label: "التقييمات" },
+  { to: "/shipping", label: "الشحن" },
+  { to: "/discounts", label: "الخصومات" },
   { to: "/stats", label: "الإحصائيات" },
   { to: "/settings", label: "الإعدادات" },
 ];

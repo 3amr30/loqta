@@ -15,6 +15,8 @@ import Settings from "./pages/Settings";
 import PricingRules from "./pages/PricingRules";
 import PriceChanges from "./pages/PriceChanges";
 import Reviews from "./pages/Reviews";
+import Shipping from "./pages/Shipping";
+import Discounts from "./pages/Discounts";
 import Stats from "./pages/Stats";
 
 interface Me {
@@ -52,6 +54,8 @@ function Protected() {
         <Route path="pricing" element={<PricingRules />} />
         <Route path="approvals" element={<PriceChanges />} />
         <Route path="reviews" element={<Reviews />} />
+        <Route path="shipping" element={<Shipping />} />
+        <Route path="discounts" element={<Discounts />} />
         <Route path="stats" element={<Stats />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
