@@ -12,6 +12,8 @@ const STATUS = z.enum([
 
 const ListQuery = z.object({
   status: STATUS.optional(),
+  // 'flagged' = customer declined or never answered the WhatsApp confirmation.
+  confirmation: z.enum(["flagged"]).optional(),
   page: z.coerce.number().int().min(1).default(1),
   from: z.coerce.date().optional(),
   to: z.coerce.date().optional(),
@@ -42,6 +44,9 @@ function buildFilters(storeId: string, q: z.infer<typeof ListQuery>) {
   if (q.status) {
     params.push(q.status);
     where.push(`o.status = $${params.length}::order_status`);
+  }
+  if (q.confirmation === "flagged") {
+    where.push(`o.whatsapp_confirmation_status in ('declined','no_response')`);
   }
   if (q.from) {
     params.push(q.from);

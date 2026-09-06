@@ -3,6 +3,7 @@ import { useParams } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { StatusBadge } from "../components/StatusBadge";
+import { confirmationMeta, trustTone, type ConfirmationStatus, type TrustHistory } from "../lib/orderMeta";
 import type { Order } from "./Orders";
 
 interface Item {
@@ -17,9 +18,21 @@ interface Item {
 }
 
 interface Detail {
-  order: Order & { shipping_address: { line?: string; notes?: string | null }; subtotal: number; shipping_fee: number; total_cost: number; notes: string | null };
+  order: Order & {
+    shipping_address: { line?: string; notes?: string | null };
+    subtotal: number;
+    shipping_fee: number;
+    total_cost: number;
+    notes: string | null;
+    discount_code: string | null;
+    discount_amount: number;
+    whatsapp_confirmation_status: ConfirmationStatus;
+    whatsapp_confirmed_at: string | null;
+  };
   items: Item[];
   nextStatuses: string[];
+  customerHistory: TrustHistory;
+  trustNote: string | null;
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -75,6 +88,36 @@ export default function OrderDetail() {
         <StatusBadge status={o.status} />
       </div>
 
+      {(() => {
+        const cm = confirmationMeta(o.whatsapp_confirmation_status);
+        const tone = trustTone(d.customerHistory);
+        if (!cm && tone === "new") return null;
+        return (
+          <section className="flex flex-wrap items-center gap-3 rounded-xl border border-stone-200 bg-white p-4">
+            {cm && (
+              <span className={`rounded-full px-3 py-1 text-xs font-medium ${cm.cls}`}>
+                واتساب: {cm.label}
+                {o.whatsapp_confirmed_at && ` · ${new Date(o.whatsapp_confirmed_at).toLocaleString("ar-EG")}`}
+              </span>
+            )}
+            {d.trustNote && (
+              <span
+                className={`rounded-full px-3 py-1 text-xs font-medium ${
+                  tone === "risky"
+                    ? "bg-red-50 text-red-700"
+                    : tone === "trusted"
+                      ? "bg-emerald-50 text-emerald-700"
+                      : "bg-stone-100 text-stone-600"
+                }`}
+              >
+                {tone === "risky" ? "⚠️ " : ""}
+                {d.trustNote}
+              </span>
+            )}
+          </section>
+        );
+      })()}
+
       <section className="rounded-xl border border-stone-200 bg-white p-5">
         <h2 className="mb-2 font-bold">العميل</h2>
         <p>{o.customer_name} — <a href={`tel:${o.customer_phone}`} className="text-amber-600" dir="ltr">{o.customer_phone}</a></p>
@@ -108,6 +151,12 @@ export default function OrderDetail() {
         </ul>
         <div className="mt-4 space-y-1 border-t border-stone-100 pt-3 text-sm">
           <div className="flex justify-between"><span>المجموع</span><span>{o.subtotal} {o.currency}</span></div>
+          {o.discount_amount > 0 && (
+            <div className="flex justify-between text-emerald-700">
+              <span>خصم{o.discount_code ? ` (${o.discount_code})` : ""}</span>
+              <span dir="ltr">−{o.discount_amount} {o.currency}</span>
+            </div>
+          )}
           <div className="flex justify-between"><span>الشحن</span><span>{o.shipping_fee} {o.currency}</span></div>
           <div className="flex justify-between font-bold"><span>الإجمالي (COD)</span><span>{o.total} {o.currency}</span></div>
           <div className="flex justify-between text-emerald-700"><span>الربح الصافي (من اللقطات)</span><span>+{o.profit} {o.currency}</span></div>

@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { api, apiBlob, saveBlob } from "../lib/api";
 import { StatusBadge } from "../components/StatusBadge";
+import { confirmationMeta, type ConfirmationStatus } from "../lib/orderMeta";
 
 export interface Order {
   id: string;
@@ -15,18 +16,26 @@ export interface Order {
   total: number;
   profit: number;
   tracking_number: string | null;
+  whatsapp_confirmation_status?: ConfirmationStatus;
   created_at: string;
   item_count?: string;
 }
 
+// key "review" is not an order_status — it maps to ?confirmation=flagged.
 const TABS = [
   { key: "", label: "الكل" },
   { key: "pending", label: "جديد" },
+  { key: "review", label: "محتاج مراجعة" },
   { key: "confirmed", label: "مؤكد" },
   { key: "fulfilled", label: "تم التجهيز" },
   { key: "shipped", label: "في الشحن" },
   { key: "delivered", label: "تم التوصيل" },
 ];
+
+function queryFor(tab: string): string {
+  if (tab === "review") return "?confirmation=flagged";
+  return tab ? `?status=${tab}` : "";
+}
 
 export default function Orders() {
   const [status, setStatus] = useState("");
@@ -34,15 +43,14 @@ export default function Orders() {
 
   const orders = useQuery({
     queryKey: ["orders", status],
-    queryFn: () =>
-      api<{ data: Order[] }>(`/v1/orders${status ? `?status=${status}` : ""}`),
+    queryFn: () => api<{ data: Order[] }>(`/v1/orders${queryFor(status)}`),
   });
 
   const downloadCsv = async () => {
     setDownloading(true);
     try {
       // Bearer-authenticated fetch -> blob; a plain <a href> would 401.
-      const blob = await apiBlob(`/v1/orders/export.csv${status ? `?status=${status}` : ""}`);
+      const blob = await apiBlob(`/v1/orders/export.csv${queryFor(status)}`);
       saveBlob(blob, "loqta-orders.csv");
     } finally {
       setDownloading(false);
@@ -86,6 +94,7 @@ export default function Orders() {
               <th className="p-3">الإجمالي</th>
               <th className="p-3">الربح</th>
               <th className="p-3">الحالة</th>
+              <th className="p-3">تأكيد واتساب</th>
               <th className="p-3">التاريخ</th>
             </tr>
           </thead>
@@ -107,11 +116,21 @@ export default function Orders() {
                 <td className="p-3 font-medium">{o.total} {o.currency}</td>
                 <td className="p-3 text-emerald-700">+{o.profit}</td>
                 <td className="p-3"><StatusBadge status={o.status} /></td>
+                <td className="p-3">
+                  {(() => {
+                    const cm = confirmationMeta(o.whatsapp_confirmation_status ?? null);
+                    return cm ? (
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${cm.cls}`}>{cm.label}</span>
+                    ) : (
+                      <span className="text-xs text-stone-400">—</span>
+                    );
+                  })()}
+                </td>
                 <td className="p-3 text-stone-500">{new Date(o.created_at).toLocaleDateString("ar-EG")}</td>
               </tr>
             ))}
             {orders.data && orders.data.data.length === 0 && (
-              <tr><td colSpan={7} className="p-8 text-center text-stone-400">مفيش طلبات هنا</td></tr>
+              <tr><td colSpan={8} className="p-8 text-center text-stone-400">مفيش طلبات هنا</td></tr>
             )}
           </tbody>
         </table>

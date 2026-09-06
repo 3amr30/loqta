@@ -16,6 +16,10 @@ interface Store {
     tiktok_pixel_id?: string | null;
     low_stock_threshold?: number;
     policies?: { refund_ar?: string; shipping_ar?: string; privacy_ar?: string };
+    confirmation_enabled?: boolean;
+    confirmation_timeout_hours?: number;
+    otp_enabled?: boolean;
+    block_after_cancellations?: number | null;
   };
 }
 
@@ -55,6 +59,10 @@ export default function Settings() {
   const [shipping, setShipping] = useState("");
   const [privacy, setPrivacy] = useState("");
   const [pixelErr, setPixelErr] = useState<string | null>(null);
+  const [confirmEnabled, setConfirmEnabled] = useState(false);
+  const [confirmTimeout, setConfirmTimeout] = useState("6");
+  const [otpEnabled, setOtpEnabled] = useState(false);
+  const [blockAfter, setBlockAfter] = useState("");
   const [saved, setSaved] = useState(false);
 
   const store = me.data?.store;
@@ -73,6 +81,14 @@ export default function Settings() {
       setRefund(store.settings?.policies?.refund_ar ?? "");
       setShipping(store.settings?.policies?.shipping_ar ?? "");
       setPrivacy(store.settings?.policies?.privacy_ar ?? "");
+      setConfirmEnabled(store.settings?.confirmation_enabled ?? false);
+      setConfirmTimeout(String(store.settings?.confirmation_timeout_hours ?? 6));
+      setOtpEnabled(store.settings?.otp_enabled ?? false);
+      setBlockAfter(
+        store.settings?.block_after_cancellations != null
+          ? String(store.settings.block_after_cancellations)
+          : "",
+      );
     }
   }, [store]);
 
@@ -96,6 +112,10 @@ export default function Settings() {
               shipping_ar: shipping,
               privacy_ar: privacy,
             },
+            confirmation_enabled: confirmEnabled,
+            confirmation_timeout_hours: Math.min(72, Math.max(1, Number(confirmTimeout) || 6)),
+            otp_enabled: otpEnabled,
+            block_after_cancellations: blockAfter.trim() ? Math.max(0, Number(blockAfter) || 0) : null,
           },
         },
       }),
@@ -156,6 +176,43 @@ export default function Settings() {
           <input type="checkbox" checked={waNewOrder} onChange={(e) => setWaNewOrder(e.target.checked)} className="accent-amber-500" />
           رسالة واتساب عند وصول طلب جديد
         </label>
+      </section>
+
+      <section className="space-y-3 rounded-xl border border-stone-200 bg-white p-5">
+        <h2 className="font-bold">تأكيد الطلبات وتقليل المرتجعات 🛡️</h2>
+        <p className="text-xs text-stone-500">
+          أدوات تقلل الطلبات الوهمية والرفض عند الاستلام. محتاجة رقم واتساب مفعّل للمتجر.
+        </p>
+
+        <label className="flex items-start gap-2 text-sm">
+          <input type="checkbox" checked={confirmEnabled} onChange={(e) => setConfirmEnabled(e.target.checked)} className="mt-1 accent-amber-500" />
+          <span>
+            <span className="font-medium">تأكيد الطلب على واتساب</span>
+            <span className="block text-xs text-stone-500">نبعت للعميل رسالة يأكد بيها الطلب. لو رفض أو ما ردش، الطلب يتحوّل لـ«محتاج مراجعة» — مش بيتلغي لوحده.</span>
+          </span>
+        </label>
+
+        <div className="flex items-center gap-2 ps-6">
+          <label className="text-sm">مهلة الرد (ساعات)</label>
+          <input value={confirmTimeout} onChange={(e) => setConfirmTimeout(e.target.value)} dir="ltr" inputMode="numeric"
+            disabled={!confirmEnabled}
+            className="w-20 rounded-lg border border-stone-300 p-2 text-left focus:border-amber-500 focus:outline-none disabled:opacity-50" />
+        </div>
+
+        <label className="flex items-start gap-2 text-sm">
+          <input type="checkbox" checked={otpEnabled} onChange={(e) => setOtpEnabled(e.target.checked)} className="mt-1 accent-amber-500" />
+          <span>
+            <span className="font-medium">التحقق من رقم الموبايل (OTP)</span>
+            <span className="block text-xs text-stone-500">للعملاء الجدد أو اللي عندهم طلبات ملغية — نطلب كود تأكيد قبل إتمام الطلب. العملاء المؤكدين بيعدّوا من غير كود.</span>
+          </span>
+        </label>
+
+        <div>
+          <label className="mb-1 block text-sm font-medium">إيقاف الطلبات بعد عدد مرات إلغاء</label>
+          <input value={blockAfter} onChange={(e) => setBlockAfter(e.target.value)} dir="ltr" inputMode="numeric" placeholder="متوقف"
+            className="w-24 rounded-lg border border-stone-300 p-2 text-left focus:border-amber-500 focus:outline-none" />
+          <p className="mt-1 text-xs text-stone-400">سيبها فاضية عشان تفضل متوقفة. الرقم ده أقصى عدد إلغاءات مسموح بيها للرقم قبل ما نمنعه.</p>
+        </div>
       </section>
 
       <section className="rounded-xl border border-stone-200 bg-white p-5">
