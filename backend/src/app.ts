@@ -23,6 +23,7 @@ import { webhookRoutes } from "./routes/v1/webhooks";
 import { reviewsRoutes } from "./routes/v1/reviews";
 import { shippingRoutes } from "./routes/v1/shipping";
 import { discountsRoutes } from "./routes/v1/discounts";
+import { customersRoutes } from "./routes/v1/customers";
 
 /** App factory - server.ts wires it to the network; tests use inject(). */
 export async function buildApp(config: Config): Promise<FastifyInstance> {
@@ -59,6 +60,7 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   reviewsRoutes(app);
   shippingRoutes(app);
   discountsRoutes(app);
+  customersRoutes(app);
 
   // Built SPA locations: <repo>/frontend/*/dist relative to backend/.
   const repoRoot = fileURLToPath(new URL("../..", import.meta.url));

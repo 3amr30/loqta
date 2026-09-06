@@ -4,6 +4,7 @@ import { supabase } from "../lib/supabase";
 
 const NAV = [
   { to: "/orders", label: "الطلبات" },
+  { to: "/customers", label: "العملاء" },
   { to: "/", label: "الاستيراد" },
   { to: "/listings", label: "المنتجات" },
   { to: "/pricing", label: "التسعير" },
