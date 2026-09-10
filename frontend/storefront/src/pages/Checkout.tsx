@@ -28,7 +28,19 @@ export default function Checkout() {
   const [otpCode, setOtpCode] = useState("");
   const [pending, setPending] = useState<Form | null>(null);
   const [otpBusy, setOtpBusy] = useState(false);
-  const { register, handleSubmit, formState } = useForm<Form>({ resolver: zodResolver(Schema) });
+  const [rates, setRates] = useState<{ governorate: string; fee: number; delivery_days: number | null }[]>([]);
+  const { register, handleSubmit, formState, watch } = useForm<Form>({ resolver: zodResolver(Schema) });
+  const selectedGov = watch("governorate");
+
+  // Per-governorate shipping rates (display only — the server recomputes the
+  // authoritative fee at checkout). Falls back to the store default fee.
+  useEffect(() => {
+    if (!store) return;
+    void api<{ rates: typeof rates }>(`/v1/public/stores/${store.slug}/shipping-rates`)
+      .then((r) => setRates(r.rates))
+      .catch(() => setRates([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [store?.slug]);
 
   // InitiateCheckout fires once when a non-empty cart reaches this page.
   useEffect(() => {
@@ -49,8 +61,11 @@ export default function Checkout() {
     );
   }
 
+  const matchedRate = rates.find((r) => r.governorate === selectedGov);
+  const shippingFee = matchedRate ? matchedRate.fee : store.shipping_fee;
+  const deliveryDays = matchedRate?.delivery_days ?? null;
   const subtotal = items.reduce((s, i) => s + i.unitPrice * i.qty, 0);
-  const total = subtotal + store.shipping_fee;
+  const total = subtotal + shippingFee;
 
   const placeOrder = async (customer: Form, otpToken?: string) => {
     const res = await api<{ orderNumber: string; total: number } | { otpRequired: true }>(
@@ -203,8 +218,8 @@ export default function Checkout() {
             <span>{subtotal} {store.currency}</span>
           </div>
           <div className="flex justify-between text-stone-500">
-            <span>الشحن</span>
-            <span>{store.shipping_fee} {store.currency}</span>
+            <span>الشحن{deliveryDays ? ` (خلال ${deliveryDays} أيام)` : ""}</span>
+            <span>{shippingFee} {store.currency}</span>
           </div>
           {code.trim() && (
             <p className="text-xs text-stone-400">

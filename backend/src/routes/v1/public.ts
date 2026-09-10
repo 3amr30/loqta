@@ -203,6 +203,27 @@ export function publicRoutes(app: FastifyInstance) {
   );
 
   app.get(
+    "/v1/public/stores/:slug/shipping-rates",
+    { config: { rateLimit: READ_LIMIT } },
+    async (req) => {
+      const { slug } = SlugParams.parse(req.params);
+      const store = await storeBySlug(slug);
+      // shipping_rates may not be migrated yet (pre-010) — degrade to default.
+      let rates: unknown[] = [];
+      try {
+        rates = await query(
+          `select governorate, fee::float8 as fee, delivery_days
+           from shipping_rates where store_id = $1`,
+          [store.id],
+        );
+      } catch (err) {
+        if ((err as { code?: string }).code !== "42P01") throw err;
+      }
+      return { default_fee: store.shipping_fee, rates };
+    },
+  );
+
+  app.get(
     "/v1/public/stores/:slug/policies/:type",
     { config: { rateLimit: READ_LIMIT } },
     async (req) => {
