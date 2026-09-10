@@ -37,9 +37,21 @@ Requirements: Node 20+, pnpm 9 (`npm i -g pnpm@9`), a Supabase project.
 pnpm install
 npx playwright install chromium          # scraper browser (once)
 
-# 1. Apply migrations to your Supabase project
-#    (supabase CLI: supabase link && supabase db push, or run the SQL
-#     files in supabase/migrations/ in order)
+# 1. Apply migrations to your Supabase project, in filename order 001 -> 010
+#    (supabase CLI: supabase link && supabase db push, or paste each SQL
+#     file from supabase/migrations/ in order)
+#
+#    POSTGRES 17 TRAP: migration 001 creates `language sql` helpers
+#    (is_store_owner, is_admin) that reference tables created in 002.
+#    PG17 validates function bodies at creation, so a plain apply FAILS.
+#    Prefix the session (or just 001) with:
+#        set check_function_bodies = off;
+#    The repo files are intentionally left unmodified; this is an
+#    apply-time setting only.
+#
+#    Order matters beyond numbering: 007 adds stores.whatsapp_phone, which
+#    the 008 storefront_stores view selects. 009 and 010 both ALTER orders
+#    but with disjoint columns (whatsapp_confirmation_* vs discount_*).
 
 # 2. Environment
 cp backend/.env.example backend/.env                       # fill in
